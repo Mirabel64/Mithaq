@@ -105,6 +105,24 @@ To securely commit to human-readable attributes, issuers must map them to `Field
 
 The following tables define the ABI order of public inputs for each credential circuit.
 
+### Aggregate proof layout versions
+
+The deployed `aggregate_proof` circuit is **V1**. It has no version header and
+has exactly 133 public fields, in this order:
+
+| Field range | Contents |
+|-------------|----------|
+| 0–64 | KYC: commitment, issuer X, issuer Y |
+| 65–131 | Age: commitment, issuer X, issuer Y, current date, threshold years |
+| 132 | `num_credentials`, fixed to 2 |
+
+The matching `submit_aggregate_proof` call must list credential types as
+`[kyc, age]`; issuers and expiries use those same slots. The registry rejects
+any other order or public-input length. Do not reorder or extend V1. Additional
+credential combinations use the separately versioned V2 proposal in
+[`ADR-005`](../docs/adr/ADR-005-versioned-aggregate-proof-layout.md); it is not
+available until its circuit, verification key and client support are deployed.
+
 ### `kyc_proof`
 | Index | Name | Type | Description |
 |-------|------|------|-------------|

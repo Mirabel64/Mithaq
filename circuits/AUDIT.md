@@ -329,3 +329,10 @@ Before re-opening work on #538 / #580:
 `aggregate_proof` on `main` is the original hardcoded KYC + age two-circuit
 version. It is correct and production-tested. Do not change it without
 addressing the points above.
+
+The deployed V1 registry parser now rejects non-canonical credential order,
+wrong field counts, and mismatched credential metadata before proof
+verification. The versioned V2 ABI and isolated rollout path are specified in
+[`docs/adr/ADR-005-versioned-aggregate-proof-layout.md`](../docs/adr/ADR-005-versioned-aggregate-proof-layout.md);
+V2 remains unimplemented pending its circuit, VK, fixtures, and proving-cost
+benchmarks.
