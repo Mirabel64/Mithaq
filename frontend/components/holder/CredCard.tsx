@@ -92,10 +92,15 @@ export function CredCard({
             </div>
             <div className="cred-card__expiry">
               {credIsExpired(c) ? (
-                <span className="cred-card__expired-label">Expired</span>
+                <span className="cred-card__expired-label">
+                  Credential expired {formatExpiryDate(credExpiryTimestamp(c))} — request a
+                  renewed credential from {c.issuer}
+                </span>
               ) : (
                 <span className={credExpiryWithinDays(c, 30) ? "cred-card__expiring" : "faint"}>
-                  Expires {formatExpiryDate(credExpiryTimestamp(c))}
+                  {status === "expired"
+                    ? `Credential valid until ${formatExpiryDate(credExpiryTimestamp(c))} — its on-chain proof has expired, re-prove below to restore it`
+                    : `Expires ${formatExpiryDate(credExpiryTimestamp(c))}`}
                 </span>
               )}
             </div>

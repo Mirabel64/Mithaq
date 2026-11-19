@@ -228,6 +228,17 @@ export function ProofFlowView({
           />
         </div>
 
+        {stage === "readyToSign" && (
+          <p className="faint" style={{ fontSize: "0.72rem", marginTop: "0.75rem" }}>
+            Only a commitment hash and the claim result become public on-chain — your underlying
+            data stays local.{" "}
+            <a href="/docs#privacy" target="_blank" rel="noreferrer">
+              Review the privacy model
+            </a>{" "}
+            before you sign.
+          </p>
+        )}
+
         {/* CTA */}
         {(stage === "generated" || stage === "preflight" || stage === "readyToSign") && (
           <>

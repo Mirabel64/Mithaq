@@ -166,6 +166,19 @@ export default function CredentialDetailModal({ credential: c, onClose, onTransf
           </button>
         </div>
 
+        <p
+          className="faint"
+          style={{ fontSize: "0.8rem", lineHeight: 1.55, marginBottom: "1rem" }}
+        >
+          Everything above stays in this browser&apos;s local storage. Submitting a proof only
+          publishes a commitment hash and a pass/fail claim result on-chain — never these raw
+          field values.{" "}
+          <a href="/docs#privacy" target="_blank" rel="noreferrer">
+            See the privacy model
+          </a>{" "}
+          before you sign.
+        </p>
+
         <div
           style={{
             background: "rgba(255,255,255,0.025)",
