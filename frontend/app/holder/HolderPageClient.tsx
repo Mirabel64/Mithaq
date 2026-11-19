@@ -33,6 +33,7 @@ import { useImportExport } from "@/lib/hooks/useImportExport";
 import { CredCard, type BatchSelection } from "@/components/holder/CredCard";
 import { SectionLabel } from "@/components/holder/SectionLabel";
 import { ImportPanel } from "@/components/holder/ImportPanel";
+import { CredentialStatusRefresh } from "@/components/holder/CredentialStatusRefresh";
 import { BatchBar } from "@/components/holder/BatchBar";
 import { ConfirmRemoveModal } from "@/components/holder/ConfirmRemoveModal";
 import { SponsorBanner } from "@/components/holder/SponsorBanner";
@@ -385,8 +386,8 @@ function HolderInner() {
 
           {importing ? (
             <ImportPanel
-              onImport={(c) => {
-                save(c);
+              onImported={() => {
+                reload();
                 setImporting(false);
               }}
               onCancel={() => setImporting(false)}
@@ -418,6 +419,7 @@ function HolderInner() {
                 </button>
                 <GuardianRecoveryControl hasCredentials={creds.length > 0} onRestored={reload} />
               </div>
+              <CredentialStatusRefresh address={address} onRefreshed={reload} />
               <p className="faint" style={{ fontSize: "0.75rem", maxWidth: 560, lineHeight: 1.6, margin: 0 }}>
                 Credentials live only in this browser (localStorage) — export a backup
                 before clearing site data or switching devices, and restore it here with{" "}

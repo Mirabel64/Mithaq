@@ -378,6 +378,28 @@ export async function saveCredential(cred: Credential): Promise<Credential[]> {
   return next;
 }
 
+/**
+ * Save several credentials in a single storage write.
+ *
+ * Import review (#67) validates a whole file before saving it; writing each
+ * valid record through `saveCredential` would re-read and re-encrypt the store
+ * once per record, and a mid-loop failure would leave a partial import. One
+ * write keeps the review's "save these N" promise atomic at the storage layer.
+ */
+export async function saveCredentials(creds: Credential[]): Promise<Credential[]> {
+  let all = await loadCredentials();
+  for (const cred of creds) {
+    all = [
+      cred,
+      ...all.filter(
+        (c) => !(c.type === cred.type && c.commitment === cred.commitment),
+      ),
+    ];
+  }
+  await persistCredentials(all);
+  return all;
+}
+
 export async function markProved(commitment: string, txHash: string): Promise<Credential[]> {
   const all = await loadCredentials();
   const next = all.map((c) =>

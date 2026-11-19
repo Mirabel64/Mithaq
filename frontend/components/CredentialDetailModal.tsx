@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { IconX, IconChevronDown, IconChevronRight } from "@tabler/icons-react";
 import { formatDate, formatDateTime, getLocaleString } from "@/lib/i18n";
+import { describeIssuerStatus } from "@/lib/issuer-status-view";
 import { type Locale } from "@/i18n.config";
 import CopyButton from "./CopyButton";
 
@@ -23,6 +24,8 @@ interface CredentialDetailModalProps {
     issuedAt: number;
     expiry: string;
     claimParams?: Record<string, unknown>;
+    /** Last-known registry state of the key that signed this credential. */
+    issuerStatus?: "active" | "key_retired" | "key_revoked" | "issuer_revoked" | "unknown";
   };
   onClose: () => void;
   /**
@@ -96,10 +99,19 @@ export default function CredentialDetailModal({ credential: c, onClose, onTransf
     ...(c.claimParams ? { claimParams: c.claimParams } : {}),
   }, null, 2);
 
+  // Issuer key history (#72): show whether the signing key is current,
+  // retired or revoked, and what that means for submission. A missing/failed
+  // registry read is rendered as "unknown" rather than as a guess.
+  const issuerKey = describeIssuerStatus(c.issuerStatus);
+
   const fields: Array<{ label: string; value: string }> = [
     { label: t("credential.type"), value: c.title },
     { label: t("credential.issuer"), value: c.issuer },
     { label: t("credential.issuerId"), value: c.issuerId },
+    {
+      label: "Issuer key status",
+      value: `${issuerKey.label} — ${issuerKey.meaning}`,
+    },
     { label: t("credential.commitment"), value: c.commitment },
     { label: t("credential.issued"), value: formatDateTime(c.issuedAt, localeStr) },
     { label: t("credential.expiry"), value: `${formatDate(expiryDate, localeStr)} (${c.expiry})` },
