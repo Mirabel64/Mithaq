@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { IssuanceQueueRecord } from "@/lib/issuance-queue";
+import { useAnnounce } from "@/components/LiveAnnouncer";
 import { issuanceQueueAction } from "../actions";
 
 function fmt(ms?: number): string {
@@ -16,19 +17,23 @@ export function QueueTable({ initialRecords }: { initialRecords: IssuanceQueueRe
   const [records, setRecords] = useState(initialRecords);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const announce = useAnnounce();
 
   async function act(id: string, action: "retry" | "resolve") {
     const actor = window.prompt("Enter your admin ID:")?.trim();
     if (!actor) return;
     setBusy(id);
     setError(null);
+    announce(`${action === "retry" ? "Retrying" : "Resolving"} ${id}…`);
     const res = await issuanceQueueAction(id, action, actor);
     setBusy(null);
     if (!res.success) {
       setError(res.error);
+      announce(`Action failed: ${res.error}`, "assertive");
       return;
     }
     setRecords((prev) => prev.map((r) => (r.eventId === id ? res.record : r)));
+    announce(`${id} ${action === "retry" ? "retried" : "marked resolved"}.`);
   }
 
   if (records.length === 0) {
