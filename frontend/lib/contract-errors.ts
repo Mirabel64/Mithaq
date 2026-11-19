@@ -45,6 +45,8 @@ export const PROOF_REGISTRY_ERRORS: Record<number, string> = {
 /** Structured representation of a contract-layer error surfaced to the UI. */
 export interface ContractError {
   friendly: string;
+  /** i18n key under `errors.contract.*` for the localized message, when one exists. */
+  messageKey?: string;
   code: number | null;
   raw: string;
 }
@@ -69,6 +71,7 @@ export function parseContractError(raw: string): ContractError {
     const code = parseInt(match[1]);
     return {
       code,
+      messageKey: code in PROOF_REGISTRY_ERRORS ? `errors.contract.${code}` : undefined,
       friendly: PROOF_REGISTRY_ERRORS[code] ?? `Contract error #${code}.`,
       raw,
     };
@@ -76,6 +79,7 @@ export function parseContractError(raw: string): ContractError {
   if (raw.includes("Error(Auth")) {
     return {
       code: null,
+      messageKey: "errors.contract.auth",
       friendly: "Wallet authorisation failed — approve the transaction in your wallet.",
       raw,
     };
@@ -83,6 +87,7 @@ export function parseContractError(raw: string): ContractError {
   if (raw.includes("Error(WasmVm")) {
     return {
       code: null,
+      messageKey: "errors.contract.wasm",
       friendly: "Contract execution failed — the proof or inputs were malformed.",
       raw,
     };
