@@ -10,6 +10,7 @@ import {
   loadPersonaPending,
   clearPersonaPending,
   clearStalePersonaPending,
+  validatePersonaPending,
   type PersonaPendingPayload,
 } from "../persona-pending";
 
@@ -41,7 +42,14 @@ describe("savePersonaPending", () => {
     savePersonaPending(basePayload);
     const blob = storedBlob();
     expect(Object.keys(blob).sort()).toEqual(
-      ["claimParams", "credential_types", "expiry", "holder", "issuerId", "issuerName"].sort(),
+      [
+        "claimParams",
+        "credential_types",
+        "expiry",
+        "holder",
+        "issuerId",
+        "issuerName",
+      ].sort(),
     );
   });
 
@@ -50,7 +58,10 @@ describe("savePersonaPending", () => {
     // resume fields — the sanitizer must strip it, not store or throw.
     const maliciousPayload = {
       ...basePayload,
-      claimParams: { ...basePayload.claimParams, nested: { first_name: "Ada", ok: 1 } },
+      claimParams: {
+        ...basePayload.claimParams,
+        nested: { first_name: "Ada", ok: 1 },
+      },
       attributes: { date_of_birth: "1990-01-01", country_code: "US" },
     } as unknown as PersonaPendingPayload;
     savePersonaPending(maliciousPayload);
@@ -63,12 +74,18 @@ describe("savePersonaPending", () => {
       expect(serialized).not.toContain(`"${key}"`);
     }
     // Legitimate sibling keys survive the strip.
-    expect(blob.claimParams).toMatchObject({ thresholdYears: "18", nested: { ok: 1 } });
+    expect(blob.claimParams).toMatchObject({
+      thresholdYears: "18",
+      nested: { ok: 1 },
+    });
   });
 
   it("drops unknown extra keys instead of persisting them", () => {
     // Simulate a caller smuggling an extra key past the type system.
-    const leakedPayload = { ...basePayload, id_number: "X1234567" } as unknown as PersonaPendingPayload;
+    const leakedPayload = {
+      ...basePayload,
+      id_number: "X1234567",
+    } as unknown as PersonaPendingPayload;
     savePersonaPending(leakedPayload);
     // id_number was passed but is not in the whitelist, so it should not appear.
     expect(JSON.stringify(storedBlob())).not.toContain("id_number");
@@ -113,10 +130,51 @@ describe("loadPersonaPending / cleanup", () => {
     expect(sessionStorage.getItem(PERSONA_PENDING_KEY)).toBeNull();
   });
 
+  it("validatePersonaPending accepts the documented resume shape", () => {
+    expect(validatePersonaPending(basePayload)).toEqual(basePayload);
+  });
+
+  it("validatePersonaPending rejects malformed field types rather than partially restoring", () => {
+    expect(validatePersonaPending(null)).toBeNull();
+    expect(validatePersonaPending([])).toBeNull();
+    expect(validatePersonaPending({ ...basePayload, holder: "" })).toBeNull();
+    expect(
+      validatePersonaPending({ ...basePayload, credential_types: [42] }),
+    ).toBeNull();
+    expect(validatePersonaPending({ ...basePayload, expiry: 90 })).toBeNull();
+    expect(
+      validatePersonaPending({ ...basePayload, claimParams: ["x"] }),
+    ).toBeNull();
+    // Unknown extra keys are tolerated but never trusted downstream.
+    expect(
+      validatePersonaPending({ ...basePayload, extra: true }),
+    ).not.toBeNull();
+  });
+
   it("clearPersonaPending removes any lingering blob", () => {
     savePersonaPending(basePayload);
     clearPersonaPending();
     expect(sessionStorage.getItem(PERSONA_PENDING_KEY)).toBeNull();
+  });
+
+  it("discards a restored payload that is missing the selected issuer (#74)", () => {
+    sessionStorage.setItem(
+      PERSONA_PENDING_KEY,
+      JSON.stringify({ credential_types: ["kyc"], holder: "GHOLDER123" }),
+    );
+    expect(loadPersonaPending()).toBeNull();
+  });
+
+  it("discards a restored payload with no credential types (#74)", () => {
+    sessionStorage.setItem(
+      PERSONA_PENDING_KEY,
+      JSON.stringify({
+        credential_types: [],
+        holder: "GHOLDER123",
+        issuerId: "GISSUER456",
+      }),
+    );
+    expect(loadPersonaPending()).toBeNull();
   });
 
   it("clearStalePersonaPending wipes abandonment (no inquiry id) but keeps an active flow's blob", () => {
