@@ -129,7 +129,23 @@
   },
   "errors": {
     "title": "Error",
-    "generic": "Ocurrió un error"
+    "generic": "Ocurrió un error",
+    "contract": {
+      "1": "Los contratos no están inicializados. Comprueba que todos los ID de contrato estén definidos en el entorno.",
+      "2": "La verificación de la prueba falló. La prueba no es válida o se generó con un circuito incorrecto.",
+      "3": "No autorizado. Falta la firma de la billetera o la cuenta conectada es incorrecta.",
+      "4": "Emisor no confiable. El emisor no está registrado para este tipo de credencial.",
+      "5": "Clave del emisor no coincide. La credencial se firmó con una clave que no está registrada en la cadena. Vuelve a emitirla e inténtalo de nuevo.",
+      "6": "Prueba no encontrada. No existe una prueba en la cadena para este titular y tipo de credencial.",
+      "7": "Lote demasiado grande. Reduce el número de pruebas e inténtalo de nuevo.",
+      "8": "El lote está vacío. Incluye al menos una prueba.",
+      "9": "Tipo de credencial duplicado. Elimina la prueba duplicada e inténtalo de nuevo.",
+      "10": "Diseño de la prueba agregada no válido. Vuelve a generar la prueba agregada.",
+      "11": "Envíos en pausa. El administrador del protocolo detuvo temporalmente las nuevas pruebas. Inténtalo más tarde.",
+      "12": "Vencimiento no válido. Vuelve a emitir la credencial con un periodo de validez válido.",
+      "auth": "La autorización de la billetera falló. Aprueba la transacción en tu billetera.",
+      "wasm": "La ejecución del contrato falló. La prueba o las entradas tenían un formato incorrecto."
+    }
   },
   "formats": {
     "dateTime": {
