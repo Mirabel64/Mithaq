@@ -129,7 +129,23 @@
   },
   "errors": {
     "title": "Error",
-    "generic": "An error occurred"
+    "generic": "An error occurred",
+    "contract": {
+      "1": "Contracts are not initialised. Check that all contract IDs are set in the environment.",
+      "2": "Proof verification failed. The proof is invalid or was generated against the wrong circuit.",
+      "3": "Not authorised. The wallet signature is missing or the wrong account is connected.",
+      "4": "Issuer not trusted. The issuer is not registered for this credential type.",
+      "5": "Issuer key mismatch. The credential was signed with a key that is not registered on-chain. Re-issue it and try again.",
+      "6": "Proof not found. No on-chain proof exists for this holder and credential type.",
+      "7": "Batch too large. Reduce the number of proofs and try again.",
+      "8": "Batch is empty. Include at least one proof submission.",
+      "9": "Duplicate credential type. Remove the duplicate proof and try again.",
+      "10": "Aggregate proof layout invalid. Re-generate the aggregate proof.",
+      "11": "Submissions paused. The protocol admin has temporarily halted new proofs. Try again later.",
+      "12": "Invalid expiry. Re-issue the credential with a valid validity window.",
+      "auth": "Wallet authorisation failed. Approve the transaction in your wallet.",
+      "wasm": "Contract execution failed. The proof or inputs were malformed."
+    }
   },
   "formats": {
     "dateTime": {
