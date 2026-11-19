@@ -7,6 +7,7 @@ import { getLocale, getMessages } from "next-intl/server";
 import { SiteNav } from "@/components/SiteNav";
 import { NetworkBanner } from "@/components/NetworkBanner";
 import { RpcStatusBanner } from "@/components/RpcStatusBanner";
+import { AccountSwitchBanner } from "@/components/AccountSwitchBanner";
 import { Footer } from "@/components/Footer";
 import { LocaleMetaTags } from "@/components/LocaleMetaTags";
 import { WalletProvider } from "@/lib/wallet-context";
@@ -101,6 +102,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <SiteNav />
               <NetworkBanner />
               <RpcStatusBanner />
+              <AccountSwitchBanner />
               <main id="main-content" tabIndex={-1} className="container">
                 {children}
               </main>

@@ -13,6 +13,7 @@
 import { useState } from "react";
 import { IconTrash, IconAlertTriangle, IconCheck, IconDownload } from "@tabler/icons-react";
 import { wipeAllData, getWipeSummary, type WipeResult } from "@/lib/data-wipe";
+import { backupReminderFor } from "@/lib/backup-reminder";
 
 export function DataWipePanel() {
   const [showConfirm, setShowConfirm] = useState(false);
@@ -20,6 +21,9 @@ export function DataWipePanel() {
   const [result, setResult] = useState<WipeResult | null>(null);
 
   const summary = getWipeSummary();
+  const reminder = backupReminderFor("wipe-all-data", {
+    hasCredentials: summary.credentials,
+  });
   const hasData =
     summary.credentials ||
     summary.proofCache ||
@@ -115,6 +119,26 @@ export function DataWipePanel() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Backup reminder (#65): credentials live only in this browser, so a
+          backup is the holder's only recovery path. */}
+      {reminder.relevant && (
+        <div
+          style={{
+            padding: "0.7rem 0.9rem",
+            borderRadius: "var(--radius)",
+            border: "1px solid rgba(245, 158, 11, 0.35)",
+            background: "rgba(245, 158, 11, 0.06)",
+            fontSize: "0.8125rem",
+            lineHeight: 1.6,
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: "0.2rem" }}>
+            {reminder.headline}
+          </div>
+          <div className="faint">{reminder.detail}</div>
         </div>
       )}
 

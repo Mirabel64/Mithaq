@@ -143,6 +143,7 @@ function HolderInner() {
         onInspect={() => setDetailCred(c)}
         isPreview={isPreview}
         selection={selection}
+        onStatusUpdated={reload}
       />
     );
   }

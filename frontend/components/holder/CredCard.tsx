@@ -22,7 +22,9 @@ import {
   credExpiryWithinDays,
   formatExpiryDate,
 } from "@/lib/proof-helpers";
-import type { Credential } from "@/lib/credential";
+import { describeDataFreshness } from "@/lib/data-freshness";
+import { saveCredential, type Credential } from "@/lib/credential";
+import { checkIssuerStatus } from "@/lib/issuer-registry";
 
 export interface BatchSelection {
   checked: boolean;
@@ -39,6 +41,7 @@ export function CredCard({
   onInspect,
   isPreview,
   selection,
+  onStatusUpdated,
 }: {
   c: Credential;
   address: string;
@@ -46,12 +49,52 @@ export function CredCard({
   onRemove: () => void;
   onInspect?: () => void;
   isPreview?: boolean;
+  /** Called after a manual status re-check persisted a new result. */
+  onStatusUpdated?: () => void;
   /** When present, renders a batch-selection checkbox. Omit for non-batchable cards. */
   selection?: BatchSelection;
 }) {
   const status = proofStatus(c);
   const { events } = useProofTimeline(c);
   const [showHistory, setShowHistory] = useState(false);
+  const [rechecking, setRechecking] = useState(false);
+
+  // Stale data must be visible (#64): `issuerStatusCheckedAt` is the last
+  // successful registry read, so an old value means the badge above may be
+  // behind the chain. `unknown` (never checked) is not treated as stale here.
+  const freshness = describeDataFreshness(
+    c.issuerStatusCheckedAt ? c.issuerStatusCheckedAt * 1000 : null,
+  );
+
+  async function recheckStatus() {
+    if (!address || rechecking) return;
+    setRechecking(true);
+    try {
+      let issuerStatus: Credential["issuerStatus"] = "unknown";
+      if (c.issuerId && c.issuerPubX && c.issuerPubY) {
+        try {
+          issuerStatus = await checkIssuerStatus(
+            c.issuerId,
+            c.type,
+            c.issuerPubX,
+            c.issuerPubY,
+            address,
+          );
+        } catch {
+          // A failed read is unknown, never a revocation.
+          issuerStatus = "unknown";
+        }
+      }
+      await saveCredential({
+        ...c,
+        issuerStatus,
+        issuerStatusCheckedAt: Math.floor(Date.now() / 1000),
+      });
+      onStatusUpdated?.();
+    } finally {
+      setRechecking(false);
+    }
+  }
 
   return (
     <div className="card cred-card">
@@ -169,6 +212,27 @@ export function CredCard({
           </button>
         </div>
       </div>
+
+      {freshness.state === "stale" && (
+        <div
+          role="status"
+          className="row"
+          style={{ gap: "0.5rem", margin: "0.4rem 0 0", flexWrap: "wrap", alignItems: "center" }}
+        >
+          <span className="faint" style={{ fontSize: "0.72rem" }}>
+            {freshness.message}
+          </span>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={recheckStatus}
+            disabled={rechecking || !address}
+            style={{ fontSize: "0.72rem", padding: "0.1rem 0.4rem" }}
+          >
+            {rechecking ? "Re-checking…" : "Re-check now"}
+          </button>
+        </div>
+      )}
 
       {showHistory && (
         <Timeline events={events} />
