@@ -388,6 +388,9 @@ function HolderInner() {
             <ImportPanel
               onImported={() => {
                 reload();
+              existingCreds={displayCreds}
+              onImport={(c) => {
+                save(c);
                 setImporting(false);
               }}
               onCancel={() => setImporting(false)}
@@ -478,6 +481,13 @@ function HolderInner() {
       {confirmBulkAction && (
         <ConfirmRemoveModal
           count={confirmBulkAction.commitments.length}
+          activeProofCount={
+            displayCreds.filter(
+              (c) =>
+                confirmBulkAction.commitments.includes(c.commitment) &&
+                proofStatus(c) === "proved",
+            ).length
+          }
           label={
             confirmBulkAction.type === "clear-expired"
               ? "Clear Expired Credentials?"

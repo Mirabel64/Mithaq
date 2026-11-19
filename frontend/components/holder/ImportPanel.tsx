@@ -21,12 +21,19 @@ export function ImportPanel({
   onCancel,
 }: {
   onImported: () => void;
+  existingCreds,
+  onImport,
+  onCancel,
+}: {
+  existingCreds: Credential[];
+  onImport: (c: Credential) => void;
   onCancel: () => void;
 }) {
   const [json, setJson] = useState("");
   const [error, setError] = useState("");
   const [report, setReport] = useState<CredentialImportReport | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pending, setPending] = useState<Credential | null>(null);
 
   function review() {
     setError("");
@@ -44,8 +51,19 @@ export function ImportPanel({
         return;
       }
       setReport(next);
+      const parsed = parseCredential(json);
+      const duplicate = existingCreds.find(
+        (c) => c.type === parsed.type && c.commitment === parsed.commitment,
+      );
+      if (duplicate) {
+        setError("");
+        setPending(parsed);
+        return;
+      }
+      onImport(parsed);
     } catch (e) {
       setError((e as Error).message);
+      setPending(null);
     }
   }
 
@@ -59,6 +77,9 @@ export function ImportPanel({
       setError((e as Error).message);
       setSaving(false);
     }
+  function onConfirmReplace() {
+    if (pending) onImport(pending);
+    setPending(null);
   }
 
   return (
@@ -156,6 +177,32 @@ export function ImportPanel({
         >
           Cancel
         </button>
+      {pending && (
+        <p style={{ color: "var(--warn, #eab308)", fontSize: "0.8125rem", marginTop: "0.5rem" }}>
+          A local credential with this commitment already exists for &ldquo;{pending.type}&rdquo;
+          — importing will replace it. Unrelated credentials are kept.
+        </p>
+      )}
+      <div className="row" style={{ marginTop: "1rem", gap: "0.6rem" }}>
+        {pending ? (
+          <>
+            <button className="btn btn-primary btn-sm" onClick={onConfirmReplace}>
+              Replace existing credential
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setPending(null)}>
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="btn btn-primary btn-sm" onClick={onAdd} disabled={!json.trim()}>
+              Add credential
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={onCancel}>
+              Cancel
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

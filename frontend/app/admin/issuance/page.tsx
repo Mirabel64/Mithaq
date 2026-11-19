@@ -19,7 +19,7 @@ const STATUSES: QueueStatusFilter[] = ["all", "pending", "failed", "resolved"];
 export default function AdminIssuancePage({
   searchParams,
 }: {
-  searchParams: { status?: string; provider?: string; q?: string };
+  searchParams: { status?: string; provider?: string; q?: string; from?: string; to?: string };
 }) {
   if (!isAdminPageAuthorized()) {
     return (
@@ -39,11 +39,16 @@ export default function AdminIssuancePage({
   const status = STATUSES.includes(searchParams.status as QueueStatusFilter)
     ? (searchParams.status as QueueStatusFilter)
     : "all";
+  // Date range (YYYY-MM-DD, UTC, inclusive) filters on the received timestamp.
+  const fromMs = searchParams.from ? Date.parse(searchParams.from) : NaN;
+  const toMs = searchParams.to ? Date.parse(searchParams.to) + 86_400_000 : NaN;
   const records = listIssuanceQueue({
     status,
     provider: searchParams.provider || undefined,
     search: searchParams.q || undefined,
-  });
+  }).filter(
+    (r) => (Number.isNaN(fromMs) || r.timestamp >= fromMs) && (Number.isNaN(toMs) || r.timestamp < toMs),
+  );
 
   return (
     <section aria-labelledby="issuance-heading">
@@ -60,6 +65,8 @@ export default function AdminIssuancePage({
         </select>
         <input name="provider" placeholder="Provider" defaultValue={searchParams.provider ?? ""} />
         <input name="q" placeholder="Event ID / type" defaultValue={searchParams.q ?? ""} />
+        <input name="from" type="date" aria-label="Received from" defaultValue={searchParams.from ?? ""} />
+        <input name="to" type="date" aria-label="Received to" defaultValue={searchParams.to ?? ""} />
         <button type="submit">Filter</button>
       </form>
       <QueueTable initialRecords={records} />

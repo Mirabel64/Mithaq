@@ -43,6 +43,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Check contract ABI compatibility
+        # Compares the contracts' exported entrypoints with the committed
+        # contracts/abi-baseline.json; removed/changed/added entrypoints fail
+        # with the regeneration command and the stale client package.
+        run: node scripts/check-contract-abi.mjs
+
       - name: Prepare CI cache presteps
         # Centralizes cache setup and common presteps so the workflow stays
         # declarative. Safe to run on a cold cache.

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   IconArrowLeft,
   IconArrowRight,
@@ -41,6 +42,7 @@ export function ProofFlowView({
 }) {
   const { networkMismatch } = useWallet();
   const toast = useToast();
+  const t = useTranslations();
   const [showRaw, setShowRaw] = useState(false);
   const submitButtonRef = useRef<HTMLButtonElement>(null);
   const successRef = useRef<HTMLDivElement>(null);
@@ -226,6 +228,17 @@ export function ProofFlowView({
           />
         </div>
 
+        {stage === "readyToSign" && (
+          <p className="faint" style={{ fontSize: "0.72rem", marginTop: "0.75rem" }}>
+            Only a commitment hash and the claim result become public on-chain — your underlying
+            data stays local.{" "}
+            <a href="/docs#privacy" target="_blank" rel="noreferrer">
+              Review the privacy model
+            </a>{" "}
+            before you sign.
+          </p>
+        )}
+
         {/* CTA */}
         {(stage === "generated" || stage === "preflight" || stage === "readyToSign") && (
           <>
@@ -319,6 +332,9 @@ export function ProofFlowView({
                       ? "Submission failed — proof is ready to retry"
                       : error.code !== null ? `Contract error #${error.code}` : "Could not complete"}
             </div>
+            {error.messageKey && t.has(error.messageKey) && (
+              <p style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>{t(error.messageKey)}</p>
+            )}
             {error.raw !== error.friendly && (
               <div style={{ marginTop: "0.6rem" }}>
                 <button

@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Modal } from "./Modal";
+import {
+  describeCameraAccessError,
+  type CameraAccessView,
+} from "@/lib/camera-permission";
 import type jsQRType from "jsqr";
 
 export function QrScanner({
@@ -19,7 +23,7 @@ export function QrScanner({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const frameRef = useRef<number | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<CameraAccessView | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,10 +64,16 @@ export function QrScanner({
     }
 
     async function start() {
-      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-        setError(
-          "Camera access requires a secure (HTTPS) context. Use the paste option below."
-        );
+      if (
+        typeof navigator === "undefined" ||
+        !navigator.mediaDevices?.getUserMedia
+      ) {
+        setError({
+          message: "Camera scanning is not available in this browser.",
+          guidance:
+            "Camera access requires a secure (HTTPS) page and a browser with getUserMedia support. Paste the QR content below to continue.",
+          manualEntry: true,
+        });
         return;
       }
       try {
@@ -82,14 +92,7 @@ export function QrScanner({
         if (!cancelled) tick();
       } catch (e) {
         if (cancelled) return;
-        const name = (e as { name?: string }).name;
-        setError(
-          name === "NotAllowedError"
-            ? "Camera access was denied. Allow camera access in your browser settings and try again."
-            : name === "NotFoundError"
-              ? "No camera found on this device."
-              : "Couldn't access the camera.",
-        );
+        setError(describeCameraAccessError((e as { name?: string }).name));
       }
     }
 
@@ -109,23 +112,43 @@ export function QrScanner({
     <Modal title={title} onClose={onClose}>
       {error ? (
         <div style={{ textAlign: "center" }}>
-          <p style={{ color: "var(--danger)", fontSize: "0.875rem", marginBottom: "1rem" }}>{error}</p>
-          <button
-            type="button"
-            onClick={() => {
-              const text = window.prompt("Paste QR code content:");
-              if (text) onScan(text.trim());
-            }}
+          <p
             style={{
-              padding: "0.5rem 1rem",
-              borderRadius: "var(--radius)",
-              border: "1px solid var(--border)",
-              background: "var(--surface)",
-              cursor: "pointer",
+              color: "var(--danger)",
+              fontSize: "0.875rem",
+              marginBottom: "0.4rem",
             }}
           >
-            Paste QR content instead
-          </button>
+            {error.message}
+          </p>
+          <p
+            className="faint"
+            style={{
+              fontSize: "0.8rem",
+              lineHeight: 1.6,
+              marginBottom: "1rem",
+            }}
+          >
+            {error.guidance}
+          </p>
+          {error.manualEntry && (
+            <button
+              type="button"
+              onClick={() => {
+                const text = window.prompt("Paste QR code content:");
+                if (text) onScan(text.trim());
+              }}
+              style={{
+                padding: "0.5rem 1rem",
+                borderRadius: "var(--radius)",
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                cursor: "pointer",
+              }}
+            >
+              Paste QR content instead
+            </button>
+          )}
         </div>
       ) : (
         <div
@@ -138,12 +161,20 @@ export function QrScanner({
             background: "#000",
           }}
         >
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption -- live camera feed, not pre-recorded media */}
-          <video ref={videoRef} muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          {}
+          <video
+            ref={videoRef}
+            muted
+            playsInline
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
         </div>
       )}
       <canvas ref={canvasRef} style={{ display: "none" }} />
-      <p className="faint" style={{ fontSize: "0.8rem", marginTop: "1rem", textAlign: "center" }}>
+      <p
+        className="faint"
+        style={{ fontSize: "0.8rem", marginTop: "1rem", textAlign: "center" }}
+      >
         {hint}
       </p>
     </Modal>

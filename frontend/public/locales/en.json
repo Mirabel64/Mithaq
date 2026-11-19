@@ -9,6 +9,26 @@
     "selectLanguage": "Select language",
     "dismiss": "Dismiss notification"
   },
+  "privacyGuide": {
+    "title": "Privacy and recovery guide",
+    "intro": "A short summary of what Mithaq keeps private, what it makes public, and how to avoid losing a credential. See docs/LIMITATIONS.md for the full detail.",
+    "storage": {
+      "heading": "Where your credentials are stored",
+      "body": "Credentials, including the raw value and its random salt, are stored only in this browser's localStorage. There is no Mithaq account and no server-side credential database. The raw value and salt never leave your device; only the proof and its public inputs are written on-chain."
+    },
+    "visibility": {
+      "heading": "What a submitted proof makes public",
+      "body": "Submitting a proof writes a record to the ProofRegistry contract. Anyone can see which wallet holds which credential type, the issuer, any threshold, and the expiry. This link stays in ledger history even after the record expires or you revoke it. The contents of the credential are not revealed, but the fact of the verification is."
+    },
+    "backup": {
+      "heading": "Backing up and recovering credentials",
+      "body": "Clearing site data, switching browsers or devices, or browsing privately erases stored credentials, and nothing can be restored from a server. Set up recovery before you need it: use Export backup on the Holder page, Guardian recovery (threshold-held key shares), or Transfer to another device for a single credential. Without one of these, a lost credential must be re-issued by the issuer."
+    },
+    "revocation": {
+      "heading": "What issuer revocation means",
+      "body": "A registered issuer can be revoked in the IssuerRegistry. Once revoked, the issuer is no longer valid, so proofs relying on it are no longer accepted. Revocation does not erase past ledger history, and getting a fresh credential from an issuer creates a new commitment rather than restoring the old one."
+    }
+  },
   "nav": {
     "brand": "Mithaq",
     "wallet": "Wallet",
@@ -129,7 +149,23 @@
   },
   "errors": {
     "title": "Error",
-    "generic": "An error occurred"
+    "generic": "An error occurred",
+    "contract": {
+      "1": "Contracts are not initialised. Check that all contract IDs are set in the environment.",
+      "2": "Proof verification failed. The proof is invalid or was generated against the wrong circuit.",
+      "3": "Not authorised. The wallet signature is missing or the wrong account is connected.",
+      "4": "Issuer not trusted. The issuer is not registered for this credential type.",
+      "5": "Issuer key mismatch. The credential was signed with a key that is not registered on-chain. Re-issue it and try again.",
+      "6": "Proof not found. No on-chain proof exists for this holder and credential type.",
+      "7": "Batch too large. Reduce the number of proofs and try again.",
+      "8": "Batch is empty. Include at least one proof submission.",
+      "9": "Duplicate credential type. Remove the duplicate proof and try again.",
+      "10": "Aggregate proof layout invalid. Re-generate the aggregate proof.",
+      "11": "Submissions paused. The protocol admin has temporarily halted new proofs. Try again later.",
+      "12": "Invalid expiry. Re-issue the credential with a valid validity window.",
+      "auth": "Wallet authorisation failed. Approve the transaction in your wallet.",
+      "wasm": "Contract execution failed. The proof or inputs were malformed."
+    }
   },
   "formats": {
     "dateTime": {

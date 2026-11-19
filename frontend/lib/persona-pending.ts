@@ -51,6 +51,59 @@ export function savePersonaPending(payload: PersonaPendingPayload): void {
   }
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+/**
+ * Validate restored verify-flow state before it is used to resume issuance
+ * (#74).
+ *
+ * The blob is written before the provider redirect and read back afterwards,
+ * so it can be stale, truncated by a storage quota, or written by another tab
+ * or extension. Every field the resume path trusts is checked here, and a
+ * payload that does not match the expected shape is discarded as a whole
+ * rather than partially resumed. This is *not* proof of provider approval —
+ * the server re-checks the inquiry status on resume; it only guarantees the
+ * credential type, issuer, and expiry shown to the holder are the ones that
+ * were actually selected.
+ */
+export function validatePersonaPending(
+  value: unknown,
+): PersonaPendingPayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const payload = value as Record<string, unknown>;
+
+  if (!isNonEmptyString(payload.holder)) return null;
+  if (!isNonEmptyString(payload.issuerId)) return null;
+  if (
+    !Array.isArray(payload.credential_types) ||
+    payload.credential_types.length === 0 ||
+    !payload.credential_types.every(isNonEmptyString)
+  ) {
+    return null;
+  }
+  if (
+    payload.issuerName !== undefined &&
+    typeof payload.issuerName !== "string"
+  ) {
+    return null;
+  }
+  if (payload.expiry !== undefined && typeof payload.expiry !== "string") {
+    return null;
+  }
+  if (
+    payload.claimParams !== undefined &&
+    (payload.claimParams === null ||
+      typeof payload.claimParams !== "object" ||
+      Array.isArray(payload.claimParams))
+  ) {
+    return null;
+  }
+
+  return value as PersonaPendingPayload;
+}
+
 /**
  * Read and immediately clear the pending payload. Clearing on read is what
  * guarantees cleanup on both success and failure of the resumed issue call;
@@ -69,8 +122,9 @@ export function loadPersonaPending(): PersonaPendingPayload | null {
   if (!raw) return null;
   try {
     // Defensively re-strip in case an older build stored something that is
-    // now considered sensitive; drop the blob entirely if it's corrupt.
-    return stripPii(JSON.parse(raw)) as PersonaPendingPayload;
+    // now considered sensitive, then validate the shape before anything
+    // downstream (issuer selection, expiry, credential types) trusts it.
+    return validatePersonaPending(stripPii(JSON.parse(raw)));
   } catch {
     return null;
   }

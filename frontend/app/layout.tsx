@@ -11,6 +11,7 @@ import { Footer } from "@/components/Footer";
 import { LocaleMetaTags } from "@/components/LocaleMetaTags";
 import { WalletProvider } from "@/lib/wallet-context";
 import { ToastProvider } from "@/components/Toast";
+import { LiveAnnouncerProvider } from "@/components/LiveAnnouncer";
 import { THEME_BOOT_SCRIPT } from "@/lib/theme";
 import type { Locale } from "@/i18n.config";
 // OnboardingWizard is deferred via next/dynamic(ssr:false) inside this client
@@ -96,6 +97,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         </a>
         <NextIntlClientProvider messages={messages} locale={locale}>
           <ToastProvider>
+            <LiveAnnouncerProvider>
             <WalletProvider>
               <OnboardingOverlays />
               <SiteNav />
@@ -106,6 +108,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               </main>
               <Footer />
             </WalletProvider>
+            </LiveAnnouncerProvider>
           </ToastProvider>
         </NextIntlClientProvider>
       </body>

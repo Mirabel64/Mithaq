@@ -45,6 +45,11 @@ use soroban_sdk::{
     symbol_short, Address, Bytes, BytesN, Env, Map, Symbol, Val, Vec,
 };
 
+mod migration;
+pub use migration::{
+    EventMigrationProgress, MigrationKey, MigrationProgress, MigrationReport, MAX_MIGRATION_CHUNK,
+};
+
 // ── Contract versioning ──────────────────────────────────────────────────────
 // Semantic version: MAJOR.MINOR.PATCH
 // Increment MAJOR on breaking changes (new entry points, changed ABI)
@@ -185,7 +190,9 @@ const PROOF_BUMP_THRESHOLD: u32 = DAY_IN_LEDGERS;
 const PROOF_TTL: u32 = 90 * DAY_IN_LEDGERS;
 const MAX_CREDENTIAL_TTL_SECS: u64 = 365 * 86_400; // 1 year, in seconds
 
-/// Maximum number of submissions accepted by `submit_proofs_batch`.
+/// Maximum number of submissions accepted by `submit_proofs` and the maximum
+/// credential count of `submit_aggregate_proof`. Exposed via `max_batch_size`;
+/// rationale and benchmark in docs/PROOF_SUBMISSION_BENCHMARKS.md.
 const MAX_BATCH_SIZE: u32 = 5;
 
 // ── Aggregate proof public-input layout (N=2: KYC + age) ────────────────────
@@ -320,6 +327,11 @@ pub enum Error {
     NoPendingAdmin = 15,
     /// The nullifier has already been consumed in this application context (#395).
     NullifierAlreadyUsed = 16,
+    /// `migrate_records` was called with a `start`/`total` that does not match
+    /// the stored migration cursor.
+    MigrationCursorMismatch = 40,
+    /// `migrate_records` was called after the migration completed.
+    MigrationAlreadyComplete = 41,
 }
 
 #[contract]
@@ -1201,6 +1213,40 @@ impl ProofRegistry {
         }
     }
 
+    /// Admin-role only. Resumable, bounded bulk form of `migrate_record`.
+    /// `records` is a chunk (at most `MAX_MIGRATION_CHUNK`) of an ordered list
+    /// of `total` (holder, credential_type) entries; `start` is the index of the
+    /// chunk's first entry and must equal the stored cursor, so after a failed
+    /// transaction or interruption the operator re-sends from
+    /// `migration_progress().cursor`. Only legacy-shaped records are rewritten.
+    /// Emits `("proof_reg", "migrated")` with the progress and returns it.
+    pub fn migrate_records(
+        env: Env,
+        start: u32,
+        total: u32,
+        records: Vec<(Address, Symbol)>,
+    ) -> MigrationProgress {
+        Self::require_role(&env, &symbol_short!("admin"));
+        migration::migrate_chunk(&env, start, total, &records)
+    }
+
+    /// Current bulk-migration cursor, total and completion flag.
+    pub fn migration_progress(env: Env) -> MigrationProgress {
+        migration::progress(&env)
+    }
+
+    /// Read-only dry run: counts how many of the listed records are legacy
+    /// (would migrate), already current, missing, or of an unrecognised shape.
+    /// Writes nothing and returns counts only.
+    pub fn dry_run_migration(env: Env, records: Vec<(Address, Symbol)>) -> MigrationReport {
+        migration::dry_run(&env, &records)
+    }
+
+    /// Maximum submissions per `submit_proofs` call, for client preflight.
+    pub fn max_batch_size(_env: Env) -> u32 {
+        MAX_BATCH_SIZE
+    }
+
     pub fn verifier_address(env: Env) -> Address {
         Self::verifier(&env)
     }
@@ -1440,3 +1486,5 @@ impl ProofRegistry {
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod bench;
