@@ -9,6 +9,26 @@
     "selectLanguage": "Seleccionar idioma",
     "dismiss": "Descartar notificación"
   },
+  "privacyGuide": {
+    "title": "Guía de privacidad y recuperación",
+    "intro": "Un resumen breve de lo que Mithaq mantiene privado, lo que hace público y cómo evitar perder una credencial. Consulta docs/LIMITATIONS.md para más detalle.",
+    "storage": {
+      "heading": "Dónde se almacenan tus credenciales",
+      "body": "Las credenciales, incluidos el valor original y su sal aleatoria, se almacenan únicamente en el localStorage de este navegador. No existe una cuenta de Mithaq ni una base de datos de credenciales en el servidor. El valor y la sal nunca salen de tu dispositivo; solo la prueba y sus entradas públicas se escriben en la cadena."
+    },
+    "visibility": {
+      "heading": "Qué hace público una prueba enviada",
+      "body": "Enviar una prueba escribe un registro en el contrato ProofRegistry. Cualquiera puede ver qué billetera tiene qué tipo de credencial, el emisor, el umbral y la expiración. Este vínculo permanece en el historial del ledger incluso después de que el registro expire o lo revoques. El contenido de la credencial no se revela, pero el hecho de la verificación sí."
+    },
+    "backup": {
+      "heading": "Copia de seguridad y recuperación",
+      "body": "Borrar los datos del sitio, cambiar de navegador o dispositivo, o navegar en privado elimina las credenciales almacenadas, y no se puede restaurar nada desde un servidor. Configura la recuperación antes de necesitarla: usa Exportar copia de seguridad en la página Holder, la recuperación con guardianes (fragmentos de clave con umbral) o Transferir a otro dispositivo para una sola credencial. Sin alguna de ellas, una credencial perdida debe ser reemitida por el emisor."
+    },
+    "revocation": {
+      "heading": "Qué significa la revocación de un emisor",
+      "body": "Un emisor registrado puede ser revocado en el IssuerRegistry. Una vez revocado, el emisor deja de ser válido y las pruebas que dependen de él ya no se aceptan. La revocación no borra el historial pasado del ledger, y obtener una credencial nueva de un emisor crea un nuevo compromiso en lugar de restaurar el anterior."
+    }
+  },
   "nav": {
     "brand": "Mithaq",
     "wallet": "Cartera",
