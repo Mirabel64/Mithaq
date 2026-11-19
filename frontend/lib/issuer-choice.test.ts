@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   eligibleIssuers,
   isProtocolAccepted,
+  issuerCapabilitySummary,
   pickDefaultIssuer,
+  ISSUER_TRUST_DISCLAIMER,
 } from "./issuer-choice";
 import type { RegisteredIssuer } from "./issuer-registry";
 import type { CredentialType } from "./stellar";
@@ -48,6 +50,22 @@ describe("isProtocolAccepted", () => {
 
   it("rejects every issuer against an explicit empty list", () => {
     expect(isProtocolAccepted("GAGE", [])).toBe(false);
+  });
+});
+
+describe("issuerCapabilitySummary", () => {
+  it("lists the claims an issuer can attest", () => {
+    expect(issuerCapabilitySummary(["age", "kyc"])).toBe("age, kyc");
+  });
+
+  it("says so when nothing is listed instead of rendering an empty cell", () => {
+    expect(issuerCapabilitySummary([])).toBe("no claims listed");
+  });
+});
+
+describe("ISSUER_TRUST_DISCLAIMER", () => {
+  it("separates protocol trust from the issuer's own process (#73)", () => {
+    expect(ISSUER_TRUST_DISCLAIMER).toContain("does not confirm");
   });
 });
 

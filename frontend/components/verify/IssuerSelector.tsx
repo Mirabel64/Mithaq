@@ -4,7 +4,11 @@ import { useRef } from "react";
 import { IconShieldCheck } from "@tabler/icons-react";
 import { Badge } from "@/components/Badge";
 import type { RegisteredIssuer } from "@/lib/issuer-registry";
-import { isProtocolAccepted } from "@/lib/issuer-choice";
+import {
+  isProtocolAccepted,
+  issuerCapabilitySummary,
+  ISSUER_TRUST_DISCLAIMER,
+} from "@/lib/issuer-choice";
 import { truncateAddress } from "@/lib/format";
 
 export interface IssuerSelectorProps {
@@ -111,10 +115,7 @@ export function IssuerSelector({
                 className="between"
                 style={{ alignItems: "center", gap: "0.75rem" }}
               >
-                <span
-                  className="row"
-                  style={{ gap: "0.6rem", minWidth: 0 }}
-                >
+                <span className="row" style={{ gap: "0.6rem", minWidth: 0 }}>
                   <span
                     style={{
                       width: 16,
@@ -160,15 +161,18 @@ export function IssuerSelector({
                     >
                       {detail}
                     </span>
+                    <span
+                      className="faint"
+                      style={{ display: "block", fontSize: "0.72rem" }}
+                    >
+                      Attests: {issuerCapabilitySummary(issuer.credentialTypes)}
+                    </span>
                   </span>
                 </span>
                 {trustedIssuerGate &&
                   (accepted ? (
                     <Badge variant="verified" dot={false}>
-                      <span
-                        className="row"
-                        style={{ gap: "0.3rem" }}
-                      >
+                      <span className="row" style={{ gap: "0.3rem" }}>
                         <IconShieldCheck size={13} />
                         Accepted by protocol
                       </span>
@@ -183,6 +187,12 @@ export function IssuerSelector({
           );
         })}
       </div>
+      <p
+        className="faint"
+        style={{ margin: "0.6rem 0 0", fontSize: "0.75rem", lineHeight: 1.6 }}
+      >
+        {ISSUER_TRUST_DISCLAIMER}
+      </p>
       {!anyAccepted && (
         <p
           style={{

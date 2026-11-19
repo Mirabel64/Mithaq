@@ -9,6 +9,15 @@
 import type { RegisteredIssuer } from "./issuer-registry";
 import type { CredentialType } from "./stellar";
 
+/**
+ * Shown next to the issuer picker (#73): protocol acceptance is a trust
+ * signal about *which* issuer may sign, not evidence that the issuer's own
+ * attestation checks are correct.
+ */
+export const ISSUER_TRUST_DISCLAIMER =
+  '"Accepted by protocol" means the protocol trusts this issuer for the claim. ' +
+  "It does not confirm that the issuer's own verification process is correct.";
+
 /** Registered, non-revoked issuers that can attest `type`. */
 export function eligibleIssuers(
   issuers: RegisteredIssuer[],
@@ -18,6 +27,15 @@ export function eligibleIssuers(
   return issuers.filter(
     (issuer) => !issuer.revoked && issuer.credentialTypes.includes(type),
   );
+}
+
+/**
+ * Human-readable list of the claims an issuer is registered to attest, so the
+ * picker can show capability next to trust and availability (#73).
+ */
+export function issuerCapabilitySummary(types: CredentialType[]): string {
+  if (types.length === 0) return "no claims listed";
+  return types.join(", ");
 }
 
 /**

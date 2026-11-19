@@ -7,6 +7,7 @@ import {
   clearStalePersonaPending,
 } from "@/lib/persona-pending";
 import { getOrCreateRequestId } from "@/lib/verify-session";
+import { describePersonaResumeStatus } from "@/lib/persona-resume";
 import { useToast } from "@/components/Toast";
 
 export interface UsePersonaResumeOptions {
@@ -28,7 +29,7 @@ export function usePersonaResume({
   onBusyChange,
   maxPollAttempts = 15,
   pollIntervalMs = 2000,
-  fetchFn = typeof fetch !== "undefined" ? fetch : (async () => ({} as Response)),
+  fetchFn = typeof fetch !== "undefined" ? fetch : async () => ({}) as Response,
 }: UsePersonaResumeOptions) {
   const [isResuming, setIsResuming] = useState(false);
   const [error, setError] = useState("");
@@ -109,8 +110,13 @@ export function usePersonaResume({
             await handleSuccess(data.credentials);
             return;
           }
-          if (data?.status === "failed") {
-            throw new Error(data.error ?? "Identity verification failed");
+          // A denial and an expiry are different states with different next
+          // actions (#75) — don't collapse them into one generic failure.
+          const resume = data?.status
+            ? describePersonaResumeStatus(data.status)
+            : null;
+          if (resume?.state === "declined" || resume?.state === "expired") {
+            throw new Error(data?.error ?? resume.guidance);
           }
         }
       } catch (e) {
