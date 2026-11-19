@@ -20,8 +20,9 @@
 //! and stores all of them atomically: if any single proof fails the entire call
 //! reverts, saving the holder from multiple wallet confirmations and fee payments.
 //!
-//! `submit_aggregate_proof` verifies a single aggregate proof covering N
-//! credential types (N=2 PoC: KYC + age) and stores all claims atomically.
+//! `submit_aggregate_proof` verifies the fixed V1 aggregate proof (KYC then
+//! age) and stores both claims atomically. Future layouts use a separate
+//! versioned entry point and verifying key.
 //!
 //! Privileged actions are governed by role-based access control (RBAC): the
 //! constructor seeds the `admin`, `upgrader` and `pauser` roles with the
@@ -195,27 +196,20 @@ const MAX_CREDENTIAL_TTL_SECS: u64 = 365 * 86_400; // 1 year, in seconds
 /// rationale and benchmark in docs/PROOF_SUBMISSION_BENCHMARKS.md.
 const MAX_BATCH_SIZE: u32 = 5;
 
-// ── Aggregate proof public-input layout (N=2: KYC + age) ────────────────────
-// The aggregate_proof circuit packs N credential public inputs sequentially,
-// followed by num_credentials as the last field.
+// ── Aggregate proof public-input layout (V1: KYC + age) ────────────────────
+// V1 has no version header: its fixed order and field count identify the
+// layout. Keep this parser strict; V2 is specified separately and must not be
+// interpreted through this legacy entry point.
 //
 // KYC (65 fields): commitment(1) + issuer_x(32) + issuer_y(32)
 // Age  (67 fields): commitment(1) + issuer_x(32) + issuer_y(32) +
-//                    current_date(1) + threshold_years(1)
+//                    current_date(1) + threshold_years(1), then count(1)
 //
 // Field indices (0-based) within public_inputs.
-// These constants document the fixed layout for auditors; runtime logic uses
-// `field_offset + aggregate_field_count` instead of referencing them directly.
-#[allow(dead_code)]
-const AGG_FIELD_KYC_START: u32 = 0;
-#[allow(dead_code)]
-const AGG_FIELD_KYC_PUBKEY: u32 = 1;
-#[allow(dead_code)]
-const AGG_FIELD_AGE_START: u32 = 65;
-#[allow(dead_code)]
-const AGG_FIELD_AGE_PUBKEY: u32 = 66;
-#[allow(dead_code)] // AGG_FIELD_AGE_START(65) + 1 + 32 + 32 + 1 = 131
-const AGG_FIELD_AGE_THRESHOLD: u32 = 131;
+const AGGREGATE_V1_CREDENTIAL_COUNT: u32 = 2;
+const AGGREGATE_V1_PUBLIC_INPUT_FIELDS: u32 = 133;
+const AGGREGATE_V1_PUBLIC_INPUT_BYTES: u32 =
+    AGGREGATE_V1_PUBLIC_INPUT_FIELDS * FIELD_BYTES;
 const AGG_FIELD_NUM_CREDENTIALS: u32 = 132;
 
 /// Typed client for the deployed CredentialVerifier contract.
@@ -795,19 +789,24 @@ impl ProofRegistry {
         holder.require_auth();
         Self::ensure_not_paused(&env);
 
+        // V1's circuit always proves KYC followed by age. Enforce that order,
+        // the exact input length and the metadata before asking the verifier
+        // to accept the legacy proof. The caller arrays are not proof-bound.
+        if issuer_ids.len() != AGGREGATE_V1_CREDENTIAL_COUNT
+            || credential_types.len() != AGGREGATE_V1_CREDENTIAL_COUNT
+            || expiries.len() != AGGREGATE_V1_CREDENTIAL_COUNT
+            || public_inputs.len() != AGGREGATE_V1_PUBLIC_INPUT_BYTES
+            || credential_types.get(0).unwrap() != symbol_short!("kyc")
+            || credential_types.get(1).unwrap() != symbol_short!("age")
+            || Self::read_u64_field(&public_inputs, AGG_FIELD_NUM_CREDENTIALS)
+                != AGGREGATE_V1_CREDENTIAL_COUNT as u64
+        {
+            panic_with_error!(&env, Error::AggregateLayoutInvalid);
+        }
+
         let verifier = VerifierClient::new(&env, &Self::verifier(&env));
         if !verifier.verify_proof(&symbol_short!("aggregate"), &proof, &public_inputs, &None) {
             panic_with_error!(&env, Error::VerificationFailed);
-        }
-
-        let num = Self::read_u64_field(&public_inputs, AGG_FIELD_NUM_CREDENTIALS);
-        if num != credential_types.len() as u64
-            || num < 2
-            || num > MAX_BATCH_SIZE as u64
-            || issuer_ids.len() != credential_types.len()
-            || expiries.len() != credential_types.len()
-        {
-            panic_with_error!(&env, Error::AggregateLayoutInvalid);
         }
 
         for expiry in expiries.iter() {

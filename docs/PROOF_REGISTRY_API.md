@@ -220,17 +220,22 @@ fn submit_aggregate_proof(env, holder: Address, issuer_ids: Vec<Address>,
 - **Audience:** Holder
 - **Auth:** `holder.require_auth()`.
 - **Stability:** Stable
-- **Parameters:** one aggregate proof covering N credential types
-  (N = 2 in the PoC: KYC + age; 2 ≤ N ≤ 5). `issuer_ids`, `credential_types`
-  and `expiries` must all have length N matching the circuit's
-  `num_credentials` public input. Each `expiry` is validated like `submit_proof`.
+- **Parameters:** one V1 aggregate proof covering exactly two credential types:
+  KYC in slot 0, then age in slot 1. `issuer_ids`, `credential_types` and
+  `expiries` must all have length 2 in that same order. V1 has no explicit
+  version field; the contract requires the exact 133-field public-input length,
+  the final `num_credentials` field to equal 2, and the canonical credential
+  ordering before verification. Each `expiry` is validated like `submit_proof`.
 - **Returns:** —
 - **Panics:** `VerificationFailed (2)`, `AggregateLayoutInvalid (10)`,
   `InvalidExpiry (12)`, `IssuerNotTrusted (4)`, `IssuerKeyMismatch (5)`.
 - **Events:** one `submitted` event per credential.
 - **Notes:** the aggregate verifying key is selected by CredentialVerifier via
   the `"aggregate"` credential type; per-credential thresholds are extracted
-  from the packed public inputs (age and income/funds layouts differ).
+  from the packed public inputs. This is the legacy V1 layout, not a generic
+  N-credential format. See
+  [ADR-005](adr/ADR-005-versioned-aggregate-proof-layout.md) for the V2 layout
+  and client migration path; V2 is not enabled by this entry point.
 
 ## 3. Reads (Integrator operations)
 

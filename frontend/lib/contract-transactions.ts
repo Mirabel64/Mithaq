@@ -549,11 +549,8 @@ export async function submitProofs(params: {
 }
 
 /**
- * Submit an aggregate proof that bundles N credential proofs into a single
- * on-chain transaction. Accepts arrays of issuer IDs, credential types, and
- * per-credential TTLs (in seconds) so heterogeneous credentials can carry
- * different expiries in one submission — mirrors the contract's
- * `expiries: Vec<u64>` parameter on `submit_aggregate_proof`.
+ * Submit a V1 aggregate proof (KYC followed by age) in one on-chain
+ * transaction. Issuers and per-credential TTLs use that same fixed order.
  */
 export async function submitAggregateProof(params: {
   holder: string;
@@ -566,6 +563,19 @@ export async function submitAggregateProof(params: {
 }): Promise<string> {
   const { holder, issuerIds, credentialTypes, proof, publicInputs, ttlSecsPerCredential } = params;
 
+  if (
+    credentialTypes.length !== 2 ||
+    credentialTypes[0] !== "kyc" ||
+    credentialTypes[1] !== "age"
+  ) {
+    throw new Error('V1 aggregate proofs require credentialTypes in the order ["kyc", "age"].');
+  }
+  if (issuerIds.length !== 2) {
+    throw new Error(`Expected 2 issuer IDs (one per V1 credential), received ${issuerIds.length}.`);
+  }
+  if (publicInputs.byteLength !== 133 * 32) {
+    throw new Error(`Expected 4256 bytes of V1 public inputs, received ${publicInputs.byteLength}.`);
+  }
   if (ttlSecsPerCredential.length !== credentialTypes.length) {
     throw new Error(
       `Expected ${credentialTypes.length} TTL values (one per credential), received ${ttlSecsPerCredential.length}.`,

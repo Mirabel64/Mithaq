@@ -808,6 +808,33 @@ fn aggregate_submits_real_proof_and_stores_claims() {
 }
 
 #[test]
+fn aggregate_rejects_credential_types_in_non_circuit_order() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.cost_estimate().budget().reset_unlimited();
+    let h = deploy_aggregate(&env);
+    let holder = Address::generate(&env);
+    let issuer_ids = vec![&env, h.issuer.clone(), h.issuer.clone()];
+    let credential_types = vec![&env, symbol_short!("age"), symbol_short!("kyc")];
+    let expiries = vec![&env, 9999u64, 9999u64];
+
+    assert!(h
+        .c
+        .registry
+        .try_submit_aggregate_proof(
+            &holder,
+            &issuer_ids,
+            &credential_types,
+            &AGGREGATE.proof_bytes(&env),
+            &AGGREGATE.public_inputs_bytes(&env),
+            &expiries,
+        )
+        .is_err());
+    assert!(!h.c.verify(&env, &holder, &KYC));
+    assert!(!h.c.verify(&env, &holder, &AGE));
+}
+
+#[test]
 fn aggregate_honors_per_credential_expiries() {
     let env = Env::default();
     env.mock_all_auths();
