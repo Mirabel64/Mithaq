@@ -17,15 +17,33 @@ import {
   getNetworkOk,
   WalletConnectError,
 } from "./wallet";
+import {
+  classifyWalletChange,
+  requiresAccountConfirmation,
+} from "./wallet-session";
 
 const STORAGE_KEY = "mithaq:wallet-id";
 const NETWORK_POLL_MS = 4_000;
+
+export interface PendingAccountSwitch {
+  from: string;
+  to: string;
+  walletId: string;
+}
 
 interface WalletState {
   address: string;
   connecting: boolean;
   error: WalletConnectError | null;
   networkMismatch: boolean;
+  /**
+   * Set when the wallet reports a different account than the one the current
+   * flow was prepared for (#61). `address` is deliberately left unchanged
+   * until the holder confirms the switch.
+   */
+  pendingAccountSwitch: PendingAccountSwitch | null;
+  confirmAccountSwitch: () => void;
+  cancelAccountSwitch: () => void;
   connect: () => Promise<void>;
   disconnect: () => void;
 }
@@ -37,6 +55,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<WalletConnectError | null>(null);
   const [networkMismatch, setNetworkMismatch] = useState(false);
+  const [pendingAccountSwitch, setPendingAccountSwitch] =
+    useState<PendingAccountSwitch | null>(null);
 
   // Restore a prior connection on mount (full reload).
   useEffect(() => {
@@ -84,8 +104,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setConnecting(true);
     setError(null);
     try {
-      const { address, walletId } = await kitConnect();
-      setAddress(address);
+      const { address: nextAddress, walletId } = await kitConnect();
+
+      // Never swap the active account silently during a flow (#61): keep the
+      // current address and ask the holder to confirm the new one.
+      if (requiresAccountConfirmation(classifyWalletChange(address, nextAddress))) {
+        setPendingAccountSwitch({ from: address, to: nextAddress, walletId });
+        return;
+      }
+
+      setAddress(nextAddress);
       localStorage.setItem(STORAGE_KEY, walletId);
     } catch (e) {
       const err = e instanceof WalletConnectError
@@ -98,11 +126,27 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setConnecting(false);
     }
+  }, [address]);
+
+  const confirmAccountSwitch = useCallback(() => {
+    if (!pendingAccountSwitch) return;
+    setAddress(pendingAccountSwitch.to);
+    try {
+      localStorage.setItem(STORAGE_KEY, pendingAccountSwitch.walletId);
+    } catch {
+      // storage unavailable — the in-memory account is still switched
+    }
+    setPendingAccountSwitch(null);
+  }, [pendingAccountSwitch]);
+
+  const cancelAccountSwitch = useCallback(() => {
+    setPendingAccountSwitch(null);
   }, []);
 
   const disconnect = useCallback(() => {
     setAddress("");
     setError(null);
+    setPendingAccountSwitch(null);
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -112,7 +156,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <WalletContext.Provider
-      value={{ address, connecting, error, networkMismatch, connect, disconnect }}
+      value={{
+        address,
+        connecting,
+        error,
+        networkMismatch,
+        pendingAccountSwitch,
+        confirmAccountSwitch,
+        cancelAccountSwitch,
+        connect,
+        disconnect,
+      }}
     >
       {children}
     </WalletContext.Provider>

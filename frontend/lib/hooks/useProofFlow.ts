@@ -28,6 +28,7 @@ import {
   type FeeEstimate,
 } from "../contracts";
 import { credTtlSecs } from "../proof-helpers";
+import { describeTransactionFailure } from "../transaction-failure";
 import { useProofTimeline } from "../useProofTimeline";
 import { probeRpcHealth, type RpcIssue } from "../rpc-health";
 import { useToast } from "@/components/Toast";
@@ -208,7 +209,15 @@ export function useProofFlow(
             return;
           }
           const parsed = parseContractError((e as Error).message);
-          setError(parsed);
+          // Contract codes and auth/WASM messages already have specific
+          // guidance. Anything else (fee, resources, expired simulation) gets
+          // actionable text here while the raw message is kept for support (#62).
+          const failure = describeTransactionFailure(parsed.raw);
+          setError(
+            failure.category === "unknown"
+              ? parsed
+              : { ...parsed, friendly: failure.friendly },
+          );
           setErrorPhase("proving");
           setStage("error");
           setStageProgress(null);
