@@ -1921,3 +1921,25 @@ textarea:focus-visible {
   text-decoration: underline;
   outline: none;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+
+  .check circle,
+  .check path {
+    stroke-dashoffset: 0 !important;
+  }
+
+  .card-link:hover,
+  .protocol-card:hover,
+  .protocol-card:active,
+  .btn:active {
+    transform: none !important;
+  }
+}
