@@ -47,28 +47,10 @@ function stageIndex(s: Stage): number {
   return STAGE_ORDER.indexOf(s);
 }
 
-function ElapsedBar({ elapsedMs, expectedMs }: { elapsedMs: number; expectedMs: number }) {
-  const pct = expectedMs > 0 ? Math.min((elapsedMs / expectedMs) * 100, 99) : 0;
+function ActivityBar() {
   return (
-    <div
-      aria-hidden="true"
-      style={{
-        height: 3,
-        borderRadius: 999,
-        background: "var(--bg-soft, rgba(255,255,255,0.07))",
-        overflow: "hidden",
-        marginTop: "0.3rem",
-        width: "100%",
-      }}
-    >
-      <div
-        style={{
-          height: "100%",
-          width: `${pct}%`,
-          background: "var(--accent, #3ecf8e)",
-          transition: "width 0.5s linear",
-        }}
-      />
+    <div className="bar" style={{ marginTop: "0.3rem" }} aria-hidden="true">
+      <i />
     </div>
   );
 }
@@ -81,13 +63,28 @@ export function ProofStageList({
   stageProgress: ProofStageProgress | null;
 }) {
   const currentIdx = stageIndex(stage);
+  const activeStage = PROOF_STAGES.find(({ key }) => key === stage);
+  const activeElapsedSecs =
+    stageProgress?.stage === stage ? Math.floor(stageProgress.elapsedMs / 1000) : 0;
 
   return (
-    <div
-      role="list"
-      aria-label="Proving stages"
-      style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}
-    >
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}>
+      <div
+        className="between"
+        style={{ fontSize: "0.72rem", gap: "0.5rem", flexWrap: "wrap" }}
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        <span className="faint">Proving in progress</span>
+        <span className="mono accent">
+          {activeStage?.label ?? stage} · {activeElapsedSecs} s elapsed
+        </span>
+      </div>
+      <div
+        role="list"
+        aria-label="Proving stages"
+        style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}
+      >
       {PROOF_STAGES.map(({ key, label, hint }, i) => {
         const isRunning = stage === key;
         const isDone = currentIdx > i;
@@ -95,7 +92,6 @@ export function ProofStageList({
 
         const showProgress = isRunning && stageProgress && stageProgress.stage === key;
         const elapsedMs = showProgress ? stageProgress.elapsedMs : 0;
-        const expectedMs = showProgress ? stageProgress.expectedMs : 0;
         const elapsedSecs = Math.floor(elapsedMs / 1000);
 
         return (
@@ -190,14 +186,12 @@ export function ProofStageList({
                 </span>
               </div>
 
-              {/* Elapsed progress bar — only while this stage is running */}
-              {isRunning && showProgress && (
-                <ElapsedBar elapsedMs={elapsedMs} expectedMs={expectedMs} />
-              )}
+              {isRunning && showProgress && <ActivityBar />}
             </div>
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
