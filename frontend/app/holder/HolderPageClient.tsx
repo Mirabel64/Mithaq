@@ -259,21 +259,36 @@ function HolderInner() {
           )}
 
           {/* ── Empty state ── */}
-          {creds.length === 0 && !importing && (
+          {displayCreds.length === 0 && !importing && (
             <div
               className="card"
               style={{ textAlign: "center", padding: "3.5rem 1.5rem", borderStyle: "dashed" }}
             >
               <IconCertificate size={30} stroke={1.3} color="var(--faint)" />
               <h3 style={{ margin: "1rem 0 0.4rem" }}>No credentials yet</h3>
-              <p className="muted" style={{ fontSize: "0.875rem", maxWidth: 340, margin: "0 auto 1.5rem" }}>
-                Get a credential from a trusted issuer, then generate a
-                zero-knowledge proof to verify it on-chain.
+              <p className="muted" style={{ fontSize: "0.875rem", maxWidth: 380, margin: "0 auto 1.5rem" }}>
+                Request a credential from a trusted issuer, connect the wallet that holds your
+                credentials, or import a backup if you already have one.
               </p>
-              <a href="/verify" className="btn btn-primary btn-sm" style={{ display: "inline-flex" }}>
-                Get a credential
-                <IconArrowRight size={14} />
-              </a>
+              <div className="row" style={{ justifyContent: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+                <a href="/verify" className="btn btn-primary btn-sm" style={{ display: "inline-flex" }}>
+                  Get a credential
+                  <IconArrowRight size={14} />
+                </a>
+                {!address && (
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={connect}>
+                    Connect wallet
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setImporting(true)}
+                >
+                  <IconPlus size={14} />
+                  Import backup
+                </button>
+              </div>
               <p
                 className="faint"
                 style={{ fontSize: "0.75rem", maxWidth: 380, margin: "1.25rem auto 0", lineHeight: 1.6 }}
