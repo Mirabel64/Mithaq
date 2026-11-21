@@ -28,6 +28,8 @@ import {
   type CredentialEvent,
   type CredentialHistory,
   type Db,
+  type DeliveryPage,
+  type DeliveryPageCursor,
   type IssuerAnalytics,
   type RecentCursor,
   type StatsRow,
@@ -608,6 +610,63 @@ export function createSharedDb(dialect: SqlDialect): Db {
         [subscriptionId, limit],
       );
       return rows.map(toWebhookDelivery);
+    },
+
+    async queryWebhookDeliveries(subscriptionId, filters) {
+      const { outcome, startTime, endTime, cursor, limit, maxAttempts } = filters;
+
+      // Build WHERE clause dynamically
+      const conditions: string[] = ["subscription_id = ?"];
+      const params: SqlParam[] = [subscriptionId];
+
+      // Filter by outcome: map status back to delivery state
+      if (outcome === "delivered") {
+        conditions.push("delivered_at IS NOT NULL");
+      } else if (outcome === "failed") {
+        conditions.push("delivered_at IS NULL AND attempts >= ?");
+        params.push(maxAttempts);
+      } else if (outcome === "retrying") {
+        conditions.push("delivered_at IS NULL AND attempts < ?");
+        params.push(maxAttempts);
+      }
+
+      // Filter by time range (occurred_at)
+      if (startTime !== undefined) {
+        conditions.push("occurred_at >= ?");
+        params.push(startTime);
+      }
+      if (endTime !== undefined) {
+        conditions.push("occurred_at <= ?");
+        params.push(endTime);
+      }
+
+      // Keyset pagination: exclude rows already seen
+      if (cursor) {
+        conditions.push("(occurred_at < ? OR (occurred_at = ? AND id < ?))");
+        params.push(cursor.occurredAt, cursor.occurredAt, cursor.id);
+      }
+
+      const whereClause = conditions.join(" AND ");
+      const rows = await dialect.all<Record<string, unknown>>(
+        `SELECT * FROM webhook_deliveries
+         WHERE ${whereClause}
+         ORDER BY occurred_at DESC, id DESC
+         LIMIT ?`,
+        [...params, limit + 1],
+      );
+
+      const deliveries = rows.map(toWebhookDelivery);
+      const hasMore = deliveries.length > limit;
+      const page = hasMore ? deliveries.slice(0, limit) : deliveries;
+      const last = page[page.length - 1];
+
+      return {
+        deliveries: page,
+        nextCursor:
+          hasMore && last
+            ? { occurredAt: last.occurred_at, id: last.id }
+            : null,
+      };
     },
 
     async close() {
