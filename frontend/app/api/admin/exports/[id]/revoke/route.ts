@@ -6,6 +6,7 @@ import {
   auditLogPersist,
 } from "@/lib/audit-log";
 import { requireAdmin } from "@/app/api/_middleware";
+import { bodyErrorResponse, readJsonBody } from "@/lib/request-limits";
 
 export const dynamic = "force-dynamic";
 
@@ -19,15 +20,9 @@ export async function POST(
   try {
     const { id } = await params;
 
-    let body: Record<string, unknown>;
-    try {
-      body = await req.json();
-    } catch {
-      return NextResponse.json(
-        { error: "request body must be valid JSON" },
-        { status: 400 },
-      );
-    }
+    const parsed = await readJsonBody<Record<string, unknown>>(req, 8 * 1024);
+    if (!parsed.ok) return bodyErrorResponse(parsed.error);
+    const body = parsed.body;
 
     const { revokedBy } = body ?? {};
     if (!revokedBy || typeof revokedBy !== "string" || !revokedBy.trim()) {

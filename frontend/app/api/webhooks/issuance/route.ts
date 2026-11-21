@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { logger, stripSensitiveFields } from "@/lib/logger";
+import { bodyErrorResponse, readTextBody } from "@/lib/request-limits";
 import {
   verifyWebhookSignature,
   parseAndNormalizeCallback,
@@ -30,7 +31,9 @@ export async function POST(req: NextRequest) {
     req.headers.get("webhook-signature") ||
     req.headers.get("persona-signature");
 
-  const rawBody = await req.text();
+  const parsedBody = await readTextBody(req, 256 * 1024);
+  if (!parsedBody.ok) return bodyErrorResponse(parsedBody.error);
+  const rawBody = parsedBody.body;
 
   if (!verifyWebhookSignature(rawBody, signatureHeader, secret)) {
     logger.warn(

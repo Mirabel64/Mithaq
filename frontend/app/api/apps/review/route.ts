@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { reviewApp } from "@/lib/apps-store";
+import { bodyErrorResponse, readJsonBody } from "@/lib/request-limits";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const parsed = await readJsonBody<Record<string, unknown>>(req, 8 * 1024);
+    if (!parsed.ok) return bodyErrorResponse(parsed.error);
+    const body = parsed.body;
     const { id, status } = body ?? {};
 
     if (!id || (status !== "approved" && status !== "rejected" && status !== "pending")) {

@@ -4,6 +4,7 @@ import {
   MAX_BODY_BYTES,
   checkContentLength,
   readJsonBody,
+  readTextBody,
   bodyErrorResponse,
 } from "../request-limits";
 
@@ -97,6 +98,18 @@ describe("readJsonBody", () => {
   it("honours a caller-supplied limit", async () => {
     const result = await readJsonBody(request(JSON.stringify({ pad: "x".repeat(200) })), 100);
     expect(result).toMatchObject({ ok: false, error: { status: 413 } });
+  });
+});
+
+describe("readTextBody", () => {
+  it("reads signed raw bodies without parsing them", async () => {
+    const raw = '{"payload":"kept exactly"}';
+    await expect(readTextBody(request(raw))).resolves.toEqual({ ok: true, body: raw });
+  });
+
+  it("rejects oversized streamed text bodies", async () => {
+    const result = await readTextBody(streamedRequest(["12345", "67890"]), 8);
+    expect(result).toMatchObject({ ok: false, error: { status: 413, code: "payload_too_large" } });
   });
 });
 
