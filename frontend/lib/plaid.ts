@@ -23,12 +23,18 @@ export type PlaidBalanceSuccess = {
   /** How many linked Plaid items were aggregated into `balance`. */
   sources?: number;
   accounts?: PlaidBalanceAccount[];
+  /** ISO currency code when available from provider. */
+  currency?: string;
 };
 
 export type PlaidBalanceFailure = {
   ok: false;
   status: number;
-  code: "PLAID_TIMEOUT" | "PLAID_UNAVAILABLE" | "PLAID_ERROR";
+  code:
+    | "PLAID_TIMEOUT"
+    | "PLAID_UNAVAILABLE"
+    | "PLAID_ERROR"
+    | "PLAID_CURRENCY_MISMATCH";
   error: string;
 };
 
@@ -146,16 +152,49 @@ async function fetchPlaidItemBalance(
   const accounts: Array<{
     type: string;
     name: string;
-    balances: { available: number | null };
+    balances: {
+      available: number | null;
+      iso_currency_code?: string | null;
+      unofficial_currency_code?: string | null;
+    };
   }> = (result.accounts as never) ?? [];
 
   const depository = accounts
     .filter((a) => a.type === "depository")
-    .map((a) => ({ name: a.name, available: a.balances.available ?? 0 }))
+    .map((a) => ({
+      name: a.name,
+      available: a.balances.available ?? 0,
+      currency: (a.balances.iso_currency_code ?? a.balances.unofficial_currency_code ?? "").toUpperCase(),
+    }))
     .sort((a, b) => b.available - a.available);
 
+  const currencies = Array.from(
+    new Set(depository.map((a) => a.currency).filter((c) => c.length > 0)),
+  );
+  if (currencies.length > 1) {
+    logger.warn(
+      stripSensitiveFields({
+        event: "plaid_currency_mismatch",
+        itemIndex,
+        currencies,
+        requestId,
+      }),
+    );
+    return {
+      ok: false,
+      status: 422,
+      code: "PLAID_CURRENCY_MISMATCH",
+      error: "Linked accounts use incompatible currencies; cannot issue a mixed-currency aggregate.",
+    };
+  }
+
   const itemBalance = depository.reduce((sum, account) => sum + account.available, 0);
-  return { ok: true, balance: itemBalance, accounts: depository };
+  return {
+    ok: true,
+    balance: itemBalance,
+    accounts: depository.map(({ name, available }) => ({ name, available })),
+    currency: currencies[0],
+  };
 }
 
 /**
@@ -212,6 +251,27 @@ export async function fetchPlaidBalance(requestId: string): Promise<PlaidBalance
   const successes = results.filter(
     (result): result is PlaidBalanceSuccess => result.ok,
   );
+  const currencies = Array.from(
+    new Set(successes.map((result) => result.currency).filter((c): c is string => !!c)),
+  );
+  const hasUnknownCurrency = successes.some((result) => !result.currency);
+  if (currencies.length > 1 || (currencies.length === 1 && hasUnknownCurrency)) {
+    logger.warn(
+      stripSensitiveFields({
+        event: "plaid_currency_mismatch",
+        currencies,
+        hasUnknownCurrency,
+        requestId,
+      }),
+    );
+    return {
+      ok: false,
+      status: 422,
+      code: "PLAID_CURRENCY_MISMATCH",
+      error: "Linked accounts use incompatible or unknown currencies; cannot issue a mixed-currency aggregate.",
+    };
+  }
+
   const accounts = successes
     .flatMap((result) => result.accounts ?? [])
     .sort((a, b) => b.available - a.available);
@@ -222,9 +282,16 @@ export async function fetchPlaidBalance(requestId: string): Promise<PlaidBalance
       event: "plaid_aggregate",
       itemCount: successes.length,
       accountCount: accounts.length,
+      currency: currencies[0],
       requestId,
     }),
   );
 
-  return { ok: true, balance, sources: successes.length, accounts };
+  return {
+    ok: true,
+    balance,
+    sources: successes.length,
+    accounts,
+    ...(currencies[0] ? { currency: currencies[0] } : {}),
+  };
 }
