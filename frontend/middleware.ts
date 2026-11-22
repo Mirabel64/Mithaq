@@ -16,6 +16,32 @@ import {
   CSP_REPORT_GROUP,
 } from "@/lib/csp.mjs";
 
+const LOCALE_COOKIE = "NEXT_LOCALE";
+
+function isSupportedLocale(value: string | undefined): value is Locale {
+  return !!value && (locales as readonly string[]).includes(value);
+}
+
+function localeFromAcceptLanguage(header: string | null): Locale | undefined {
+  if (!header) return undefined;
+  const candidates = header
+    .split(",")
+    .map((part) => {
+      const [tagPart, ...params] = part.trim().split(";");
+      const qParam = params.find((p) => p.trim().startsWith("q="));
+      const q = qParam ? Number(qParam.trim().slice(2)) : 1;
+      return { tag: tagPart.toLowerCase(), q: Number.isFinite(q) ? q : 0 };
+    })
+    .sort((a, b) => b.q - a.q);
+
+  for (const { tag, q } of candidates) {
+    if (q <= 0) continue;
+    const base = tag.split("-")[0];
+    if (isSupportedLocale(base)) return base;
+  }
+  return undefined;
+}
+
 function resolveRequestId(inbound: string | null | undefined): string {
   const REQUEST_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
   if (inbound && REQUEST_ID_RE.test(inbound)) return inbound;
@@ -33,17 +59,43 @@ export function middleware(request: NextRequest) {
   if (!request.nextUrl.pathname.startsWith("/api")) {
     const { pathname } = request.nextUrl;
 
-    // Check if pathname starts with a non-default locale (e.g. /es or /es/...)
+    // Locale precedence: explicit URL locale > saved explicit choice (cookie)
+    // > browser language (Accept-Language) > default locale.
+    // Manual selection updates the cookie and URL; saved choice is only applied
+    // when the URL has no explicit locale prefix.
     let locale: Locale = defaultLocale;
     let targetPath = pathname;
+    let hasUrlLocale = false;
 
     for (const loc of locales) {
       if (loc === defaultLocale) continue;
       if (pathname === `/${loc}` || pathname.startsWith(`/${loc}/`)) {
         locale = loc;
         targetPath = pathname.slice(loc.length + 1) || "/";
+        hasUrlLocale = true;
         break;
       }
+    }
+
+    if (!hasUrlLocale) {
+      const saved = request.cookies.get(LOCALE_COOKIE)?.value;
+      if (isSupportedLocale(saved)) {
+        locale = saved;
+      } else {
+        locale = localeFromAcceptLanguage(request.headers.get("accept-language")) ?? defaultLocale;
+      }
+    }
+
+    if (!hasUrlLocale && locale !== defaultLocale) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = `/${locale}${pathname === "/" ? "" : pathname}`;
+      const redirect = NextResponse.redirect(redirectUrl);
+      redirect.cookies.set(LOCALE_COOKIE, locale, {
+        path: "/",
+        maxAge: 31536000,
+        sameSite: "lax",
+      });
+      return redirect;
     }
 
     const mode = resolveCspMode(process.env.CSP_MODE);
@@ -95,7 +147,11 @@ export function middleware(request: NextRequest) {
       "Reporting-Endpoints",
       `${CSP_REPORT_GROUP}="${CSP_REPORT_PATH}"`,
     );
-    response.cookies.set("NEXT_LOCALE", locale, { path: "/", maxAge: 31536000, sameSite: "lax" });
+    response.cookies.set(LOCALE_COOKIE, locale, {
+      path: "/",
+      maxAge: 31536000,
+      sameSite: "lax",
+    });
     return response;
   }
 

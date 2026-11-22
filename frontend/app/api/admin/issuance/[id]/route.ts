@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/app/api/_middleware";
 import { retryIssuance, resolveIssuance } from "@/lib/issuance-queue";
 import { auditLogAppend, auditLogBootstrap, auditLogPersist } from "@/lib/audit-log";
+import { bodyErrorResponse, readJsonBody } from "@/lib/request-limits";
 
 export const dynamic = "force-dynamic";
 
@@ -10,11 +11,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (denied) return denied;
 
   let body: { action?: unknown; actor?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await readJsonBody<{ action?: unknown; actor?: unknown }>(req, 8 * 1024);
+  if (!parsed.ok) return bodyErrorResponse(parsed.error);
+  body = parsed.body;
   const actor = typeof body.actor === "string" ? body.actor.trim() : "";
   if (!actor) return NextResponse.json({ error: "actor is required" }, { status: 400 });
   if (body.action !== "retry" && body.action !== "resolve") {

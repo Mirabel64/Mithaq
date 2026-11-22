@@ -14,9 +14,11 @@
  *
  * ## Key extraction
  *
- * - **IP** — read in order: `x-forwarded-for` (first value), `x-real-ip`,
- *   `cf-connecting-ip` (Cloudflare), then fall back to `"unknown"`. Never
- *   logged verbatim; only a SHA-256–truncated token appears in log events.
+ * - **IP** — resolved by `lib/client-ip.ts` from the configured proxy
+ *   boundary (`TRUSTED_PROXY_HOPS`, `TRUSTED_CLIENT_IP_HEADER`). Forwarding
+ *   headers are ignored entirely by default, so the caller cannot choose its
+ *   own bucket. Never logged verbatim; only a SHA-256–truncated token appears
+ *   in log events. See `docs/client-ip-trust.md`.
  * - **Wallet address** — callers supply this from the already-parsed body.
  *   It is never logged; same hashed token approach.
  *
@@ -62,6 +64,7 @@ import { createHash } from "crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { getSharedStore, checkMultiInstanceStoreWarning } from "./shared-store";
+import { readClientIpConfig, resolveClientIp } from "./client-ip";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -320,29 +323,20 @@ export function getRateLimitStatus(
 // ---------------------------------------------------------------------------
 
 /**
- * Extract the best-effort client IP from a Next.js request.
+ * Extract the client IP from a Next.js request.
  *
- * Reads, in order:
- *   1. `x-forwarded-for` — the first (leftmost) address, which is the
- *      original client IP when the proxy prepends rather than replaces.
- *   2. `x-real-ip` — set by nginx by default.
- *   3. `cf-connecting-ip` — set by Cloudflare.
+ * The address is taken from the headers only as far as the configured proxy
+ * boundary allows (`TRUSTED_PROXY_HOPS` / `TRUSTED_CLIENT_IP_HEADER`, see
+ * `lib/client-ip.ts`). With no configuration every forwarding header is
+ * ignored and this returns `"unknown"`, which is the safe default: a caller
+ * cannot mint buckets by sending its own `x-forwarded-for`.
  *
- * Falls back to `"unknown"` when none is present (e.g. in test environments).
- * The returned string is the raw IP, suitable for use as a Map key.  It is
- * never written to any log.
+ * The returned string is canonical (IPv4-mapped IPv6 is unwrapped, IPv6 is
+ * compressed) and is suitable for use as a Map key. It is never written to any
+ * log — use {@link hashForLog} for that.
  */
 export function extractIp(req: NextRequest): string {
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) {
-    const first = xff.split(",")[0].trim();
-    if (first) return first;
-  }
-  const realIp = req.headers.get("x-real-ip");
-  if (realIp) return realIp.trim();
-  const cfIp = req.headers.get("cf-connecting-ip");
-  if (cfIp) return cfIp.trim();
-  return "unknown";
+  return resolveClientIp(req.headers, readClientIpConfig());
 }
 
 // ---------------------------------------------------------------------------

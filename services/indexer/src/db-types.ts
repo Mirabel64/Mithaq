@@ -225,6 +225,18 @@ export interface Db {
   ): void | Promise<void>;
   /** Return a subscription's recent delivery history. */
   webhookDeliveries(subscriptionId: number, limit: number): WebhookDelivery[] | Promise<WebhookDelivery[]>;
+  /** Query webhook deliveries with outcome and time range filters, plus keyset pagination. */
+  queryWebhookDeliveries(
+    subscriptionId: number,
+    filters: {
+      outcome?: "delivered" | "failed" | "retrying";
+      startTime?: number;
+      endTime?: number;
+      cursor?: DeliveryPageCursor;
+      limit: number;
+      maxAttempts: number;
+    },
+  ): DeliveryPage | Promise<DeliveryPage>;
 
   /** Close the underlying connection / pool. */
   close(): void | Promise<void>;
@@ -245,6 +257,19 @@ export interface RecentPage {
   claims: ClaimRow[];
   /** Cursor to pass as `?cursor=` for the next page; null when exhausted. */
   nextCursor: RecentCursor | null;
+}
+
+/** Keyset pagination key for webhook deliveries, ordered by (occurred_at DESC, id DESC). */
+export interface DeliveryPageCursor {
+  occurredAt: number;
+  id: number;
+}
+
+/** One page of delivery query results plus the cursor for the next page (if any). */
+export interface DeliveryPage {
+  deliveries: WebhookDelivery[];
+  /** Cursor to pass as `?cursor=` for the next page; null when exhausted. */
+  nextCursor: DeliveryPageCursor | null;
 }
 
 /**

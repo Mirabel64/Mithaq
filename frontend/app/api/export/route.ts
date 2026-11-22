@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { bodyErrorResponse, readJsonBody } from '@/lib/request-limits';
 import {
   createExportJob,
   listUserExportJobs,
@@ -40,7 +41,9 @@ export async function POST(req: NextRequest) {
   try {
     const { userAddress, isAdmin } = getUserContext(req);
 
-    const body = await req.json().catch(() => ({}));
+    const parsed = await readJsonBody<Record<string, unknown>>(req, 8 * 1024);
+    if (!parsed.ok) return bodyErrorResponse(parsed.error);
+    const body = parsed.body;
     const { scope, format = 'json', tenantId = 'default' } = body as {
       scope?: string;
       format?: string;

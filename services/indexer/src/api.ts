@@ -53,7 +53,8 @@
  *
  *   GET /webhooks/subscriptions[?wallet=Gâ€¦]
  *   DELETE /webhooks/subscriptions/:id
- *   GET /webhooks/subscriptions/:id/deliveries
+ *   GET /webhooks/subscriptions/:id/deliveries[?outcome=delivered|failed|retrying&startTime=N&endTime=N&limit=20&cursor=…]
+ *     â†' { deliveries, limit, nextCursor }
  *
  * /recent uses keyset (cursor) pagination ordered by (ledger_sequence, id) â€”
  * the `nextCursor` returned with each page is an opaque token that must be
@@ -105,7 +106,7 @@ import type { Config } from "./config";
 import { parseCorsOrigins } from "./config";
 import { createCorsMiddleware } from "./cors";
 import { RateLimiter } from "./rate-limit";
-import type { RecentCursor } from "./db";
+import type { RecentCursor, DeliveryPageCursor } from "./db";
 import { requireAuth } from "./auth";
 import { claimState, isExpired } from "./integrity";
 import type { IntegrityChecker } from "./integrity";
@@ -221,6 +222,32 @@ function decodeCursor(raw: string): RecentCursor {
     throw new Error("invalid cursor");
   }
   return { ledgerSequence, id };
+}
+
+// â"€â"€ Delivery cursor encoding â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// Delivery cursors encode (occurred_at, id) for stable keyset pagination.
+
+function encodeDeliveryCursor(
+  occurredAt: number,
+  id: number
+): string {
+  return Buffer.from(`${occurredAt}:${id}`, "utf8").toString("base64url");
+}
+
+function decodeDeliveryCursor(raw: string): { occurredAt: number; id: number } {
+  const decoded = Buffer.from(raw, "base64url").toString("utf8");
+  const [timeRaw, idRaw] = decoded.split(":");
+  const occurredAt = Number(timeRaw);
+  const id = Number(idRaw);
+  if (
+    !Number.isInteger(occurredAt) ||
+    !Number.isInteger(id) ||
+    occurredAt < 0 ||
+    id < 1
+  ) {
+    throw new Error("invalid cursor");
+  }
+  return { occurredAt, id };
 }
 
 // Helper: wrap an async handler and forward errors to next()
@@ -961,9 +988,72 @@ export function buildApp(
         sendApiError(res, 404, "subscription not found");
         return;
       }
-      const deliveries = await db.webhookDeliveries(id, 100);
+
+      // Parse query parameters
+      const limit = Math.min(
+        Number(req.query["limit"] ?? DEFAULT_LIMIT) || DEFAULT_LIMIT,
+        MAX_LIMIT
+      );
+      const outcome = req.query["outcome"];
+      if (
+        outcome !== undefined &&
+        outcome !== "delivered" &&
+        outcome !== "failed" &&
+        outcome !== "retrying"
+      ) {
+        sendApiError(
+          res,
+          400,
+          "outcome must be one of: delivered, failed, retrying"
+        );
+        return;
+      }
+
+      let startTime: number | undefined;
+      if (req.query["startTime"] !== undefined) {
+        startTime = Number(req.query["startTime"]);
+        if (!Number.isInteger(startTime) || startTime < 0) {
+          sendApiError(res, 400, "startTime must be a non-negative integer");
+          return;
+        }
+      }
+
+      let endTime: number | undefined;
+      if (req.query["endTime"] !== undefined) {
+        endTime = Number(req.query["endTime"]);
+        if (!Number.isInteger(endTime) || endTime < 0) {
+          sendApiError(res, 400, "endTime must be a non-negative integer");
+          return;
+        }
+      }
+
+      if (startTime !== undefined && endTime !== undefined && startTime > endTime) {
+        sendApiError(res, 400, "startTime must be before endTime");
+        return;
+      }
+
+      let cursor: DeliveryPageCursor | undefined;
+      if (req.query["cursor"] !== undefined) {
+        try {
+          const decoded = decodeDeliveryCursor(req.query["cursor"] as string);
+          cursor = decoded;
+        } catch {
+          sendApiError(res, 400, "invalid cursor");
+          return;
+        }
+      }
+
+      const page = await db.queryWebhookDeliveries(id, {
+        outcome: outcome as "delivered" | "failed" | "retrying" | undefined,
+        startTime,
+        endTime,
+        cursor,
+        limit,
+        maxAttempts: MAX_WEBHOOK_DELIVERY_ATTEMPTS,
+      });
+
       res.json({
-        deliveries: deliveries.map((delivery) => ({
+        deliveries: page.deliveries.map((delivery) => ({
           id: delivery.id,
           eventId: delivery.event_id,
           type: delivery.type,
@@ -982,6 +1072,10 @@ export function buildApp(
           deliveredAt: delivery.delivered_at,
           lastError: delivery.last_error,
         })),
+        limit,
+        nextCursor: page.nextCursor
+          ? encodeDeliveryCursor(page.nextCursor.occurredAt, page.nextCursor.id)
+          : null,
       });
     }),
   );
@@ -992,7 +1086,15 @@ export function buildApp(
   });
 
   // â”€â”€ Error handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  app.use((err: Error & { type?: string }, _req: Request, res: Response, _next: NextFunction) => {
+    if (err.type === "entity.too.large") {
+      sendApiError(res, 413, "request body exceeds the endpoint size limit");
+      return;
+    }
+    if (err.type === "entity.parse.failed") {
+      sendApiError(res, 400, "invalid JSON body");
+      return;
+    }
     console.error("[indexer/api] unhandled error:", err);
     sendApiError(res, 500, "internal server error");
   });

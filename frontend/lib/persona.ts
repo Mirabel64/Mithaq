@@ -8,7 +8,8 @@ import { env } from "./env";
 export const PERSONA_BASE = "https://withpersona.com/api/v1";
 export const PERSONA_VERSION = "2023-01-05";
 
-// End-to-end budget for a single Persona provider call.
+// End-to-end budget for a single Persona provider call. Prevents upstream
+// stalls from consuming resources or leaving issuance requests stuck.
 export const PERSONA_TIMEOUT_MS = 8_000;
 
 async function fetchPersona(

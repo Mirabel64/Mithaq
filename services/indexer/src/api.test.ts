@@ -1054,6 +1054,27 @@ describe("claim lifecycle webhook subscriptions", () => {
       });
     expect(unknownClaim.status).toBe(400);
   });
+
+  it("returns a stable 413 before validating an oversized JSON body", async () => {
+    app = buildApp(db, makeIngester(), {
+      ...makeConfig(tmpFile),
+      apiKey: "indexer-test-key",
+      webhookSigningSecret: "w".repeat(32),
+      rateLimitEnabled: false,
+    });
+
+    const res = await request(app)
+      .post("/webhooks/subscriptions")
+      .set("Authorization", "Bearer indexer-test-key")
+      .set("Content-Type", "application/json")
+      .send(JSON.stringify({ padding: "x".repeat(17 * 1024) }));
+
+    expect(res.status).toBe(413);
+    expect(res.body).toMatchObject({
+      code: "PAYLOAD_TOO_LARGE",
+      error: "request body exceeds the endpoint size limit",
+    });
+  });
 });
 
 describe("GraphQL endpoint", () => {

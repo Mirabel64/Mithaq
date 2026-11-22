@@ -20,6 +20,7 @@ import {
   LIMITS,
   tooManyRequestsResponse,
 } from "@/lib/rate-limit";
+import { bodyErrorResponse, readTextBody } from "@/lib/request-limits";
 
 // Read the sponsor secret once at module load.
 const SPONSOR_SECRET = process.env.SPONSOR_SECRET ?? "";
@@ -64,16 +65,11 @@ export async function POST(req: NextRequest) {
   // ── Body parsing ───────────────────────────────────────────────────────────
   // Read the body manually to enforce the 128 KB cap (larger than the standard
   // MAX_BODY_BYTES because batch XDRs can be sizeable).
+  const rawBody = await readTextBody(req, MAX_BODY_BYTES);
+  if (!rawBody.ok) return bodyErrorResponse(rawBody.error);
   let body: { signedXdr?: string; holder?: string };
   try {
-    const raw = await req.text();
-    if (raw.length > MAX_BODY_BYTES) {
-      return NextResponse.json(
-        { ok: false, error: "Request body too large." },
-        { status: 413 },
-      );
-    }
-    body = JSON.parse(raw);
+    body = JSON.parse(rawBody.body) as { signedXdr?: string; holder?: string };
   } catch {
     return NextResponse.json(
       { ok: false, error: "Invalid JSON body." },
