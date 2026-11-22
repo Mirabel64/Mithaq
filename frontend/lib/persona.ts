@@ -8,6 +8,34 @@ import { env } from "./env";
 export const PERSONA_BASE = "https://withpersona.com/api/v1";
 export const PERSONA_VERSION = "2023-01-05";
 
+// End-to-end budget for a single Persona provider call.
+export const PERSONA_TIMEOUT_MS = 8_000;
+
+async function fetchPersona(
+  path: string,
+  init: RequestInit,
+  requestLabel: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), PERSONA_TIMEOUT_MS);
+
+  try {
+    return await fetch(`${PERSONA_BASE}${path}`, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    const isTimeout = (err as { name?: string }).name === "AbortError";
+    throw new Error(
+      isTimeout
+        ? `Persona: ${requestLabel} timed out after ${PERSONA_TIMEOUT_MS}ms`
+        : `Persona: ${requestLabel} failed before receiving a response`,
+    );
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
 // Minimal ISO 3166-1 alpha-2 → numeric map for countries we care about.
 // Persona returns alpha-2 codes; our jurisdiction circuit uses numeric.
 export const ALPHA2_TO_NUMERIC: Record<string, string> = {
@@ -50,19 +78,23 @@ export async function createPersonaInquiry(
   redirectUri: string,
   referenceId?: string,
 ): Promise<{ url: string; id: string }> {
-  const res = await fetch(`${PERSONA_BASE}/inquiries`, {
-    method: "POST",
-    headers: personaHeaders(),
-    body: JSON.stringify({
-      data: {
-        attributes: {
-          "inquiry-template-id": templateId,
-          "redirect-uri": redirectUri,
-          ...(referenceId ? { "reference-id": referenceId } : {}),
+  const res = await fetchPersona(
+    "/inquiries",
+    {
+      method: "POST",
+      headers: personaHeaders(),
+      body: JSON.stringify({
+        data: {
+          attributes: {
+            "inquiry-template-id": templateId,
+            "redirect-uri": redirectUri,
+            ...(referenceId ? { "reference-id": referenceId } : {}),
+          },
         },
-      },
-    }),
-  });
+      }),
+    },
+    "create inquiry",
+  );
   const json = await res.json();
   if (!res.ok) {
     throw new Error(
@@ -78,9 +110,11 @@ export async function retrievePersonaInquiry(inquiryId: string): Promise<{
   status: string;
   fields: Record<string, { value: unknown }>;
 }> {
-  const res = await fetch(`${PERSONA_BASE}/inquiries/${inquiryId}`, {
-    headers: personaHeaders(),
-  });
+  const res = await fetchPersona(
+    `/inquiries/${encodeURIComponent(inquiryId)}`,
+    { headers: personaHeaders() },
+    "retrieve inquiry",
+  );
   const json = await res.json();
   if (!res.ok) {
     throw new Error(
