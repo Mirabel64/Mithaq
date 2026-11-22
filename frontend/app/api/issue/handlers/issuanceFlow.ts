@@ -146,13 +146,20 @@ export async function runIssuanceFlow(
               issuerId,
               walletAddress: holder,
               outcome: "verification_failed",
+              providerCode: "PERSONA_VERIFICATION_FAILED",
               requestId,
             }),
           );
           return {
             kind: "error",
             status: 403,
-            body: { error: kyc.error ?? "Identity verification failed" },
+            body: {
+              error: "Identity verification requires user action before issuance can continue.",
+              code: "PERSONA_VERIFICATION_FAILED",
+              retryable: false,
+              userActionRequired: true,
+              provider: "persona",
+            },
           };
         }
 
@@ -168,22 +175,31 @@ export async function runIssuanceFlow(
         );
         if (kyc.dob) attributes.date_of_birth = kyc.dob;
         if (kyc.countryNumeric) attributes.country_code = kyc.countryNumeric;
-      } catch {
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const timedOut = /timed out/i.test(message);
         logger.error(
           stripSensitiveFields({
             event: "provider_call",
             credentialType: "kyc",
             issuerId,
             walletAddress: holder,
-            outcome: "provider_unavailable",
+            outcome: timedOut ? "provider_timeout" : "provider_unavailable",
+            providerCode: timedOut ? "PERSONA_TIMEOUT" : "PERSONA_PROVIDER_UNAVAILABLE",
             requestId,
           }),
         );
         return {
           kind: "error",
-          status: 502,
+          status: timedOut ? 504 : 502,
           body: {
-            error: "Identity verification service is unavailable. Please try again.",
+            error: timedOut
+              ? "Identity verification timed out. Please retry."
+              : "Identity verification service is unavailable. Please try again.",
+            code: timedOut ? "PERSONA_TIMEOUT" : "PERSONA_PROVIDER_UNAVAILABLE",
+            retryable: true,
+            userActionRequired: false,
+            provider: "persona",
           },
         };
       }
@@ -196,20 +212,28 @@ export async function runIssuanceFlow(
   if (credentialTypes.includes("funds")) {
     const plaid = await fetchPlaidBalance(requestId);
     if (!plaid.ok) {
+      const retryable = plaid.code === "PLAID_TIMEOUT" || plaid.code === "PLAID_UNAVAILABLE";
       logger.info(
         stripSensitiveFields({
           event: "provider_call",
           credentialType: "funds",
           issuerId,
           walletAddress: holder,
-          outcome: "verification_failed",
+          outcome: plaid.code === "PLAID_TIMEOUT" ? "provider_timeout" : "verification_failed",
+          providerCode: plaid.code,
           requestId,
         }),
       );
       return {
         kind: "error",
         status: plaid.status,
-        body: { error: plaid.error, code: plaid.code },
+        body: {
+          error: plaid.error,
+          code: plaid.code,
+          retryable,
+          userActionRequired: false,
+          provider: "plaid",
+        },
       };
     }
 

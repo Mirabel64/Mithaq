@@ -24,6 +24,8 @@ export interface KeyValueStore {
   readonly name: string;
   get(key: string): Promise<string | null>;
   set(key: string, value: string, ttlSeconds?: number): Promise<void>;
+  /** Set value only when key is absent. Returns true when the key was written. */
+  setIfAbsent?(key: string, value: string, ttlSeconds?: number): Promise<boolean>;
   del(key: string): Promise<void>;
   incr(
     key: string,
@@ -59,6 +61,17 @@ export class MemoryStore implements KeyValueStore {
     const expiresAt =
       ttlSeconds && ttlSeconds > 0 ? Date.now() + ttlSeconds * 1000 : null;
     this.store.set(key, { value, expiresAt });
+  }
+
+  async setIfAbsent(
+    key: string,
+    value: string,
+    ttlSeconds?: number,
+  ): Promise<boolean> {
+    const existing = await this.get(key);
+    if (existing !== null) return false;
+    await this.set(key, value, ttlSeconds);
+    return true;
   }
 
   async del(key: string): Promise<void> {
@@ -177,6 +190,19 @@ export class UpstashRedisStore implements KeyValueStore {
 
   async del(key: string): Promise<void> {
     await this.execute(["DEL", key]);
+  }
+
+  async setIfAbsent(
+    key: string,
+    value: string,
+    ttlSeconds?: number,
+  ): Promise<boolean> {
+    const command: (string | number)[] = ["SET", key, value, "NX"];
+    if (ttlSeconds && ttlSeconds > 0) {
+      command.push("EX", Math.ceil(ttlSeconds));
+    }
+    const result = await this.execute<string | null>(command);
+    return result === "OK";
   }
 
   async incr(
