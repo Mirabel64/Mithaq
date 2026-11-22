@@ -992,7 +992,15 @@ export function buildApp(
   });
 
   // â”€â”€ Error handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  app.use((err: Error & { type?: string }, _req: Request, res: Response, _next: NextFunction) => {
+    if (err.type === "entity.too.large") {
+      sendApiError(res, 413, "request body exceeds the endpoint size limit");
+      return;
+    }
+    if (err.type === "entity.parse.failed") {
+      sendApiError(res, 400, "invalid JSON body");
+      return;
+    }
     console.error("[indexer/api] unhandled error:", err);
     sendApiError(res, 500, "internal server error");
   });

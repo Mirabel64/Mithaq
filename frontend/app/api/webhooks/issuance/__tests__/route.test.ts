@@ -91,6 +91,22 @@ describe("POST /api/webhooks/issuance (#846)", () => {
     expect(data.error).toContain("Malformed");
   });
 
+  it("rejects oversized webhook bodies before signature validation", async () => {
+    const oversizedBody = "x".repeat(256 * 1024 + 1);
+    const req = new NextRequest("http://localhost:3000/api/webhooks/issuance", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": String(Buffer.byteLength(oversizedBody)),
+      },
+      body: oversizedBody,
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ code: "payload_too_large" });
+  });
+
   it("returns 200 and records valid callback", async () => {
     const payload = {
       eventId: "evt_test_success_123",

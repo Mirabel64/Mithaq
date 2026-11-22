@@ -15,6 +15,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { enqueueOutboundEvent } from "../../../lib/outbound-sink";
+import { bodyErrorResponse, readJsonBody } from "../../../lib/request-limits";
 
 const STAGES = ["witness", "prove", "submit"] as const;
 type StageName = (typeof STAGES)[number];
@@ -121,14 +122,10 @@ function absorb(run: RawRun): number {
 }
 
 export async function POST(req: NextRequest) {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid json" }, { status: 400 });
-  }
+  const parsed = await readJsonBody<unknown>(req, 256 * 1024);
+  if (!parsed.ok) return bodyErrorResponse(parsed.error);
 
-  const runs = (body as { runs?: unknown })?.runs;
+  const runs = (parsed.body as { runs?: unknown })?.runs;
   if (!Array.isArray(runs)) {
     return NextResponse.json({ error: "runs must be an array" }, { status: 400 });
   }

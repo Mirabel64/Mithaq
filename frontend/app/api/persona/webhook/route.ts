@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { bodyErrorResponse, readTextBody } from "@/lib/request-limits";
 import { env } from "@/lib/env";
 import { logger, stripSensitiveFields } from "@/lib/logger";
 import { getIssuerSigner } from "@/lib/issuer-signer";
@@ -55,7 +56,9 @@ export async function POST(req: NextRequest) {
   const signatureHeader =
     req.headers.get("persona-signature") || req.headers.get("Persona-Signature");
 
-  const rawBody = await req.text();
+  const parsedBody = await readTextBody(req, 256 * 1024);
+  if (!parsedBody.ok) return bodyErrorResponse(parsedBody.error);
+  const rawBody = parsedBody.body;
 
   if (!verifyPersonaSignature(rawBody, signatureHeader, secret)) {
     logger.warn(

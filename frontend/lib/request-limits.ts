@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 //
 // The body is never logged, and never appears in the error response.
 
-/** Maximum accepted request body, in bytes. */
+/** Default maximum accepted request body, in bytes. */
 export const MAX_BODY_BYTES = 64 * 1024;
 
 export type BodyError = {
@@ -56,28 +56,30 @@ export function checkContentLength(
 }
 
 /**
- * Reads and parses a JSON request body, enforcing `maxBytes`.
- *
- * Replaces a bare `await req.json()`: the caller gets a `413` for an oversized
- * body and a `400` for malformed JSON, and at no point is more than `maxBytes`
- * of the body held in memory.
+ * Reads a request body as text while enforcing `maxBytes`. The raw text is
+ * useful for signed webhooks, where parsing must happen only after signature
+ * verification.
  */
-export async function readJsonBody<T>(
+export async function readTextBody(
   req: NextRequest,
   maxBytes: number = MAX_BODY_BYTES,
-): Promise<BodyResult<T>> {
+): Promise<BodyResult<string>> {
   const declaredTooLarge = checkContentLength(req, maxBytes);
   if (declaredTooLarge) return { ok: false, error: declaredTooLarge };
 
   const body = req.body;
-  // No stream to read (an empty body, or a runtime that already buffered it).
-  // Fall back to the built-in parse — the Content-Length check above still
-  // capped it, and there is nothing to stream-guard.
   if (!body) {
     try {
-      return { ok: true, body: (await req.json()) as T };
+      const text = await req.text();
+      if (new TextEncoder().encode(text).byteLength > maxBytes) {
+        return { ok: false, error: tooLarge(maxBytes) };
+      }
+      return { ok: true, body: text };
     } catch {
-      return { ok: false, error: { status: 400, code: "invalid_json", message: "Invalid JSON" } };
+      return {
+        ok: false,
+        error: { status: 400, code: "invalid_json", message: "Could not read request body" },
+      };
     }
   }
 
@@ -92,8 +94,6 @@ export async function readJsonBody<T>(
       if (!value) continue;
       total += value.byteLength;
       if (total > maxBytes) {
-        // Stop pulling from the stream as soon as the cap is passed — the
-        // remainder of the payload is never read into memory.
         await reader.cancel().catch(() => {});
         return { ok: false, error: tooLarge(maxBytes) };
       }
@@ -112,9 +112,24 @@ export async function readJsonBody<T>(
     buf.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  return { ok: true, body: new TextDecoder().decode(buf) };
+}
 
+/**
+ * Reads and parses a JSON request body, enforcing `maxBytes`.
+ *
+ * Replaces a bare `await req.json()`: the caller gets a `413` for an oversized
+ * body and a `400` for malformed JSON, and at no point is more than `maxBytes`
+ * of the body held in memory.
+ */
+export async function readJsonBody<T>(
+  req: NextRequest,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<BodyResult<T>> {
+  const text = await readTextBody(req, maxBytes);
+  if (!text.ok) return text;
   try {
-    return { ok: true, body: JSON.parse(new TextDecoder().decode(buf)) as T };
+    return { ok: true, body: JSON.parse(text.body) as T };
   } catch {
     return { ok: false, error: { status: 400, code: "invalid_json", message: "Invalid JSON" } };
   }
