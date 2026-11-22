@@ -26,10 +26,14 @@ function createReportRequest(
 
 describe("POST /api/csp-report", () => {
   const originalEnv = process.env.RATE_LIMIT_CSP_REPORT_IP;
+  const originalHops = process.env.TRUSTED_PROXY_HOPS;
 
   beforeEach(() => {
     rateLimitClear();
     process.env.RATE_LIMIT_CSP_REPORT_IP = "2";
+    // Per-IP throttling assumes a configured proxy boundary; lib/client-ip
+    // ignores x-forwarded-for when TRUSTED_PROXY_HOPS is unset.
+    process.env.TRUSTED_PROXY_HOPS = "1";
   });
 
   afterEach(() => {
@@ -39,6 +43,8 @@ describe("POST /api/csp-report", () => {
     } else {
       delete process.env.RATE_LIMIT_CSP_REPORT_IP;
     }
+    if (originalHops === undefined) delete process.env.TRUSTED_PROXY_HOPS;
+    else process.env.TRUSTED_PROXY_HOPS = originalHops;
   });
 
   it("handles legacy payload: returns 204 and logs one sanitized violation via logger.warn", async () => {

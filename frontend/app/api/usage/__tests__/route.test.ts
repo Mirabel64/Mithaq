@@ -32,11 +32,18 @@ function usageRequest(ip: string, wallet?: string): NextRequest {
   });
 }
 
+// The route resolves the caller through lib/client-ip, which ignores
+// forwarding headers unless a proxy boundary is configured.
+const originalHops = process.env.TRUSTED_PROXY_HOPS;
+
 beforeEach(() => {
+  process.env.TRUSTED_PROXY_HOPS = "1";
   rateLimitClear();
 });
 
 afterEach(() => {
+  if (originalHops === undefined) delete process.env.TRUSTED_PROXY_HOPS;
+  else process.env.TRUSTED_PROXY_HOPS = originalHops;
   vi.useRealTimers();
 });
 
