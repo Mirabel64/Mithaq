@@ -417,6 +417,80 @@ export function idempotencySize(): number {
 }
 
 // ---------------------------------------------------------------------------
+// Distributed lock (multi-instance de-duplication)
+// ---------------------------------------------------------------------------
+
+const DISTRIBUTED_LOCK_PREFIX = "idem:lock:";
+const DISTRIBUTED_LOCK_TTL_SECONDS = 30;
+
+function distributedLockTtlSeconds(): number {
+  const ttl = Math.ceil(ttlMs() / 1000);
+  return Math.max(5, Math.min(DISTRIBUTED_LOCK_TTL_SECONDS, ttl));
+}
+
+export async function idempotencyAcquireDistributedLock(
+  key: string,
+): Promise<boolean> {
+  if (!isValidIdempotencyKey(key)) return false;
+
+  const shared = getSharedStore();
+  if (typeof shared.setIfAbsent !== "function") {
+    return true;
+  }
+
+  try {
+    return await shared.setIfAbsent(
+      `${DISTRIBUTED_LOCK_PREFIX}${key}`,
+      String(Date.now()),
+      distributedLockTtlSeconds(),
+    );
+  } catch {
+    // Fail closed for duplicate-mint safety: if we cannot coordinate across
+    // instances, caller should not become leader.
+    return false;
+  }
+}
+
+export async function idempotencyReleaseDistributedLock(
+  key: string,
+): Promise<void> {
+  if (!isValidIdempotencyKey(key)) return;
+
+  const shared = getSharedStore();
+  if (typeof shared.setIfAbsent !== "function") return;
+
+  await shared.del(`${DISTRIBUTED_LOCK_PREFIX}${key}`).catch(() => null);
+}
+
+export async function idempotencyHasDistributedLock(
+  key: string,
+): Promise<boolean> {
+  if (!isValidIdempotencyKey(key)) return false;
+  const shared = getSharedStore();
+  if (typeof shared.setIfAbsent !== "function") return false;
+  try {
+    const value = await shared.get(`${DISTRIBUTED_LOCK_PREFIX}${key}`);
+    return value !== null;
+  } catch {
+    return false;
+  }
+}
+
+export async function idempotencyWaitForCompletedRecord(
+  key: string,
+  timeoutMs = 5_000,
+  pollMs = 200,
+): Promise<IdempotencyRecord | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const record = await idempotencyGetAsync(key);
+    if (record) return record;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return idempotencyGetAsync(key);
+}
+
+// ---------------------------------------------------------------------------
 // In-flight sentinel (single-flight de-duplication)
 // ---------------------------------------------------------------------------
 
