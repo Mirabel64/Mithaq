@@ -85,6 +85,15 @@ export interface IngesterHealth {
   fetchAttempts: number;
   /** Total failed fetch attempts (all retries exhausted) since start. */
   fetchFailures: number;
+  unresolvedLedgerRange?: UnresolvedLedgerRange;
+}
+
+export interface UnresolvedLedgerRange {
+  fromLedger: number;
+  toLedger: number | null;
+  reason: string;
+  since: number;
+  attempts: number;
 }
 
 /** Prometheus metrics for the ingester. */
@@ -247,13 +256,9 @@ function isTransientError(err: unknown): boolean {
  * @param retries   Remaining retries (internal, do not pass)
  * @param attempt   Current attempt number (1-based, internal)
  */
-// Lint suppression (#855): dead since the tick path was rewritten around the
-// plain `fetchEvents` helper below, which has no backoff. Keeping it because it
-// is the only bounded-retry implementation in the service and `isTransientError`
-// above still documents that Horizon status codes are handled here. Wiring the
-// tick path onto it — or deleting it — changes ingestion behaviour, so that is a
-// call for the ingester owner, not a linting PR.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const delayWithJitter = (base: number): number =>
+  Math.min(base + base * 0.2 * Math.random(), MAX_RETRY_DELAY_MS);
+
 async function fetchEventsWithRetry(
   url: string,
   signal: AbortSignal,
@@ -282,9 +287,11 @@ async function fetchEventsWithRetry(
       }
       // For 429, honour Retry-After if present; otherwise use exponential backoff.
       const retryAfter = res.headers.get("retry-after");
-      const delayMs = retryAfter
-        ? Math.min(Number(retryAfter) * 1000, MAX_RETRY_DELAY_MS)
-        : Math.min(BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1), MAX_RETRY_DELAY_MS);
+      const delayMs = delayWithJitter(
+        retryAfter
+          ? Math.min(Number(retryAfter) * 1000, MAX_RETRY_DELAY_MS)
+          : Math.min(BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1), MAX_RETRY_DELAY_MS)
+      );
       console.warn(
         `[indexer] Horizon ${res.status} on attempt ${attempt}/${attempt + retries}, retrying in ${delayMs}ms…`,
       );
@@ -299,9 +306,8 @@ async function fetchEventsWithRetry(
     if (!isTransientError(err) || retries <= 0) {
       throw err;
     }
-    const delayMs = Math.min(
-      BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1),
-      MAX_RETRY_DELAY_MS,
+    const delayMs = delayWithJitter(
+      Math.min(BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1), MAX_RETRY_DELAY_MS),
     );
     console.warn(
       `[indexer] transient fetch error on attempt ${attempt}/${attempt + retries}: ${(err as Error).message}; retrying in ${delayMs}ms…`,
@@ -621,12 +627,17 @@ export function createIngester(config: Config, db: Db): Ingester {
       url.searchParams.set("cursor", cursor);
     }
 
-    const res = await fetch(url.toString());
-    if (!res.ok) {
-      if (res.status === 404) return [];
-      throw new Error(`Horizon responded ${res.status}: ${await res.text()}`);
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      config.httpClient?.timeoutMs ?? 10_000
+    );
+    let page: HorizonEventsPage;
+    try {
+      page = await fetchEventsWithRetry(url.toString(), controller.signal);
+    } finally {
+      clearTimeout(timeout);
     }
-    const page = (await res.json()) as HorizonEventsPage;
     const records = page._embedded?.records ?? [];
 
     // Filter out events beyond the finality boundary
@@ -698,6 +709,17 @@ export function createIngester(config: Config, db: Db): Ingester {
       headLedger = await getLedgerHead();
     } catch (err) {
       console.warn("[indexer] Could not fetch ledger head:", (err as Error).message);
+      health.lastError = (err as Error).message;
+      health.lastErrorTime = Date.now();
+      health.consecutiveErrors++;
+      health.fetchFailures++;
+      health.unresolvedLedgerRange = {
+        fromLedger: lastLedger + 1,
+        toLedger: null,
+        reason: (err as Error).message,
+        since: health.lastErrorTime,
+        attempts: health.consecutiveErrors,
+      };
       fetchErrorsTotal++;
       return 0;
     }
@@ -722,7 +744,7 @@ export function createIngester(config: Config, db: Db): Ingester {
     // nothing final to index.
     const finalityCeiling = headLedger - config.finalityLag;
     if (finalityCeiling <= lastLedger) {
-      // Head hasn't advanced past our cursor + lag yet — nothing to do.
+      health.unresolvedLedgerRange = undefined;
       return 0;
     }
 
@@ -747,6 +769,13 @@ export function createIngester(config: Config, db: Db): Ingester {
       health.consecutiveErrors++;
       health.fetchFailures++;
       console.warn("[indexer] Horizon fetch error:", (err as Error).message);
+      health.unresolvedLedgerRange = {
+        fromLedger: lastLedger + 1,
+        toLedger: finalityCeiling,
+        reason: (err as Error).message,
+        since: health.lastErrorTime ?? Date.now(),
+        attempts: health.consecutiveErrors,
+      };
       fetchErrorsTotal++;
       return 0;
     }
@@ -759,6 +788,7 @@ export function createIngester(config: Config, db: Db): Ingester {
       health.lag = lag;
       health.consecutiveErrors = 0;
       health.lastError = null;
+      health.unresolvedLedgerRange = undefined;
       return 0;
     }
 
@@ -793,6 +823,7 @@ export function createIngester(config: Config, db: Db): Ingester {
     health.lag = lag;
     health.consecutiveErrors = 0;
     health.lastError = null;
+    health.unresolvedLedgerRange = undefined;
 
     lastTickDurationSec = (Date.now() - lastTickEnd) / 1000;
     lastTickEnd = Date.now();

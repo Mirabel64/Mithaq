@@ -17,6 +17,7 @@
  */
 
 import type { IngesterHealth } from "./ingester";
+import { getRpcDiagnostics, type RpcDiagnostics } from "./rpc-client";
 
 /** Consecutive fetch failures at or above which status becomes "error". */
 export const ERROR_THRESHOLD = 3;
@@ -42,6 +43,8 @@ export interface IndexerHealthResponse {
   consecutiveErrors: number;
   fetchAttempts: number;
   fetchFailures: number;
+  rpc?: RpcDiagnostics;
+  unresolvedLedgerRange?: IngesterHealth["unresolvedLedgerRange"];
 }
 
 /**
@@ -80,5 +83,7 @@ export function buildHealthResponse(
     consecutiveErrors: h.consecutiveErrors,
     fetchAttempts: h.fetchAttempts,
     fetchFailures: h.fetchFailures,
+    rpc: getRpcDiagnostics(),
+    unresolvedLedgerRange: h.unresolvedLedgerRange,
   };
 }
