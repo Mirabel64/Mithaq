@@ -61,9 +61,11 @@ export function LanguageSwitcher() {
       return;
     }
 
-    // Save preference to localStorage
+    // Save explicit language choice for next visit. Cookie is used by
+    // middleware for locale precedence; localStorage keeps a client-side copy.
     if (typeof window !== "undefined") {
       localStorage.setItem("preferred-locale", newLocale);
+      document.cookie = `NEXT_LOCALE=${newLocale}; path=/; max-age=31536000; samesite=lax`;
     }
 
     // Remove current locale prefix from pathname if present
