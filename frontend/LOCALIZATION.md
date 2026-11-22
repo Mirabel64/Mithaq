@@ -228,7 +228,18 @@ frontend/
 - **next-intl** (v3.16.0) - Next.js 14 i18n library
 - **Intl API** - Browser native date/number formatting
 - **Middleware** - Transparent locale routing (/es/*, not /en/*)
-- **localStorage** - Persists user's locale preference
+- **Cookie + localStorage** - Persists the user's explicit locale choice
+
+### Locale precedence and persistence
+
+Mithaq applies locale in this order:
+
+1. **Explicit URL locale** �?" paths like `/es/...` select that locale for the request and update the saved `NEXT_LOCALE` cookie.
+2. **Saved explicit choice** �?" when the URL has no locale prefix, the `NEXT_LOCALE` cookie (set by a manual language selection) is applied on the next visit.
+3. **Browser language** �?" if there is no saved explicit choice, the `Accept-Language` header is used to pick a supported locale.
+4. **Default locale** �?" falls back to `en` when no supported locale is resolved.
+
+Manual selections from the language switcher update both `localStorage` (`preferred-locale`) and the `NEXT_LOCALE` cookie. A later manual selection replaces the previous saved choice; browser language and saved defaults do not override an explicit URL locale.
 
 ### Routing Behavior
 - `/` → English (default)

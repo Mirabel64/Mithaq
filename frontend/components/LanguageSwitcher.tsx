@@ -23,6 +23,7 @@ export function LanguageSwitcher() {
   const [mounted, setMounted] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   // Only render on client to avoid hydration mismatches
   useEffect(() => {
@@ -55,15 +56,63 @@ export function LanguageSwitcher() {
     };
   }, [isOpen, mounted]);
 
+  // Move focus into the listbox when opened for predictable keyboard navigation.
+  useEffect(() => {
+    if (!isOpen || !mounted) return;
+    const selectedIndex = Math.max(0, locales.indexOf(locale));
+    optionRefs.current[selectedIndex]?.focus();
+  }, [isOpen, mounted, locale]);
+
+  const focusOption = (index: number) => {
+    const total = locales.length;
+    const nextIndex = (index + total) % total;
+    optionRefs.current[nextIndex]?.focus();
+  };
+
+  const handleMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const currentIndex = optionRefs.current.findIndex(
+      (el) => el === document.activeElement,
+    );
+    const fallbackIndex = Math.max(0, locales.indexOf(locale));
+    const index = currentIndex === -1 ? fallbackIndex : currentIndex;
+
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        focusOption(index + 1);
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        focusOption(index - 1);
+        break;
+      case "Home":
+        e.preventDefault();
+        focusOption(0);
+        break;
+      case "End":
+        e.preventDefault();
+        focusOption(locales.length - 1);
+        break;
+      case "Tab":
+        setIsOpen(false);
+        break;
+      default:
+        break;
+    }
+  };
+
   const handleLocaleChange = (newLocale: Locale) => {
     if (newLocale === locale) {
       setIsOpen(false);
+      buttonRef.current?.focus();
       return;
     }
 
-    // Save preference to localStorage
+    // Save explicit language choice for next visit. Cookie is used by
+    // middleware for locale precedence; localStorage keeps a client-side copy.
     if (typeof window !== "undefined") {
       localStorage.setItem("preferred-locale", newLocale);
+      document.cookie = `NEXT_LOCALE=${newLocale}; path=/; max-age=31536000; samesite=lax`;
     }
 
     // Remove current locale prefix from pathname if present
@@ -122,6 +171,9 @@ export function LanguageSwitcher() {
       {isOpen && (
         <div
           role="listbox"
+          aria-label="Select language"
+          aria-activedescendant={undefined}
+          onKeyDown={handleMenuKeyDown}
           style={{
             position: "absolute",
             top: "100%",
@@ -136,11 +188,15 @@ export function LanguageSwitcher() {
             overflow: "hidden",
           }}
         >
-          {locales.map((loc) => (
+          {locales.map((loc, index) => (
             <button
               key={loc}
+              ref={(el) => {
+                optionRefs.current[index] = el;
+              }}
               role="option"
               aria-selected={loc === locale}
+              tabIndex={-1}
               onClick={() => handleLocaleChange(loc)}
               style={{
                 width: "100%",
