@@ -16,11 +16,15 @@ import {
   decryptEncryptedResponseIdempotencyRecord,
   encryptedResponseIdempotencyRecord,
   hasReplayEncryptionKey,
+  idempotencyAcquireDistributedLock,
   idempotencyGetAsync,
+  idempotencyHasDistributedLock,
+  idempotencyReleaseDistributedLock,
   idempotencySetAsync,
   idempotencyInFlightBegin,
   idempotencyInFlightSettle,
   idempotencyInFlightFail,
+  idempotencyWaitForCompletedRecord,
   isValidIdempotencyKey,
   MAX_KEY_LENGTH_BYTES,
   type IdempotencyRecord,
@@ -106,6 +110,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  let holdsDistributedLock = false;
   if (idempotencyKey) {
     while (true) {
       const record = await idempotencyGetAsync(idempotencyKey);
@@ -115,7 +120,31 @@ export async function POST(req: NextRequest) {
       }
 
       const inFlight = idempotencyInFlightBegin(idempotencyKey);
-      if (!inFlight) break;
+      if (!inFlight) {
+        holdsDistributedLock = await idempotencyAcquireDistributedLock(idempotencyKey);
+        if (holdsDistributedLock) break;
+
+        const completed = await idempotencyWaitForCompletedRecord(idempotencyKey);
+        if (completed) {
+          logger.info(stripSensitiveFields({ event: "idempotency_hit", requestId }));
+          return replayIdempotencyRecord(completed, requestId);
+        }
+
+        if (await idempotencyHasDistributedLock(idempotencyKey)) {
+          return standardizeApiErrorResponse(
+            NextResponse.json(
+              {
+                code: "IDEMPOTENCY_IN_PROGRESS",
+                error: "A request with this Idempotency-Key is already in progress. Retry with the same key.",
+                requestId,
+              },
+              { status: 409, headers: { "x-request-id": requestId, "Retry-After": "2" } },
+            ),
+            requestId,
+          );
+        }
+        continue;
+      }
 
       logger.info(stripSensitiveFields({ event: "idempotency_inflight_hit", requestId }));
       try {
@@ -129,33 +158,37 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Rate limiting (IP level) ───────────────────────────────────────────────
-  const ip = extractIp(req);
-  const windowMs = LIMITS.windowMs();
-  const ipResult = checkLimit(`issue:batch:ip:${ip}`, LIMITS.issuePerIp(), windowMs);
-  if (ipResult.throttled) {
-    logger.warn(
-      stripSensitiveFields({
-        event: "rate_limited",
-        route: "issue_batch",
-        dimension: "ip",
-        ipToken: hashForLog(ip),
-        requestId,
-      }),
-    );
-    if (idempotencyKey) {
-      idempotencyInFlightFail(idempotencyKey, new Error("rate limited"));
-    }
-    return standardizeApiErrorResponse(
-      tooManyRequestsResponse(ipResult.retryAfterMs),
-      requestId,
-    );
-  }
-
   try {
+    const ip = extractIp(req);
+    const windowMs = LIMITS.windowMs();
+    const ipResult = checkLimit(`issue:batch:ip:${ip}`, LIMITS.issuePerIp(), windowMs);
+    if (ipResult.throttled) {
+      logger.warn(
+        stripSensitiveFields({
+          event: "rate_limited",
+          route: "issue_batch",
+          dimension: "ip",
+          ipToken: hashForLog(ip),
+          requestId,
+        }),
+      );
+      if (idempotencyKey) {
+        idempotencyInFlightFail(idempotencyKey, new Error("rate limited"));
+      }
+      return standardizeApiErrorResponse(
+        tooManyRequestsResponse(ipResult.retryAfterMs),
+        requestId,
+      );
+    }
+
     return await executeBatchRequest(req, requestId, idempotencyKey);
   } catch (e) {
     if (idempotencyKey) idempotencyInFlightFail(idempotencyKey, e);
     throw e;
+  } finally {
+    if (holdsDistributedLock && idempotencyKey) {
+      await idempotencyReleaseDistributedLock(idempotencyKey);
+    }
   }
 }
 

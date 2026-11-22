@@ -5,11 +5,15 @@ import { logger, stripSensitiveFields, resolveRequestId } from "@/lib/logger";
 import { recordIssuance } from "@/lib/metrics";
 import {
   completedIdempotencyRecord,
+  idempotencyAcquireDistributedLock,
   idempotencyGetAsync,
+  idempotencyHasDistributedLock,
+  idempotencyReleaseDistributedLock,
   idempotencySetAsync,
   idempotencyInFlightBegin,
   idempotencyInFlightSettle,
   idempotencyInFlightFail,
+  idempotencyWaitForCompletedRecord,
   isValidIdempotencyKey,
   MAX_KEY_LENGTH_BYTES,
   personaPendingIdempotencyRecord,
@@ -60,6 +64,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  let holdsDistributedLock = false;
   if (idempotencyKey) {
     while (true) {
       const record = await idempotencyGetAsync(idempotencyKey);
@@ -69,7 +74,31 @@ export async function POST(req: NextRequest) {
       }
 
       const inFlight = idempotencyInFlightBegin(idempotencyKey);
-      if (!inFlight) break;
+      if (!inFlight) {
+        holdsDistributedLock = await idempotencyAcquireDistributedLock(idempotencyKey);
+        if (holdsDistributedLock) break;
+
+        const completed = await idempotencyWaitForCompletedRecord(idempotencyKey);
+        if (completed) {
+          logger.info(stripSensitiveFields({ event: "idempotency_hit", requestId }));
+          return replayIdempotencyRecord(completed, requestId);
+        }
+
+        if (await idempotencyHasDistributedLock(idempotencyKey)) {
+          return standardizeApiErrorResponse(
+            NextResponse.json(
+              {
+                code: "IDEMPOTENCY_IN_PROGRESS",
+                error: "A request with this Idempotency-Key is already in progress. Retry with the same key.",
+                requestId,
+              },
+              { status: 409, headers: { "x-request-id": requestId, "Retry-After": "2" } },
+            ),
+            requestId,
+          );
+        }
+        continue;
+      }
 
       logger.info(stripSensitiveFields({ event: "idempotency_inflight_hit", requestId }));
       try {
@@ -83,19 +112,23 @@ export async function POST(req: NextRequest) {
 
   // Per-IP limit runs before the body is read, and before the idempotency
   // cache, so a throttled IP never gets its 429 stored and replayed.
-  const ipLimited = enforceIpRateLimit(req, requestId);
-  if (ipLimited) {
-    if (idempotencyKey) {
-      idempotencyInFlightFail(idempotencyKey, new Error("rate limited"));
-    }
-    return standardizeApiErrorResponse(ipLimited, requestId);
-  }
-
   try {
+    const ipLimited = enforceIpRateLimit(req, requestId);
+    if (ipLimited) {
+      if (idempotencyKey) {
+        idempotencyInFlightFail(idempotencyKey, new Error("rate limited"));
+      }
+      return standardizeApiErrorResponse(ipLimited, requestId);
+    }
+
     return await executeRequest(req, requestId, idempotencyKey);
   } catch (e) {
     if (idempotencyKey) idempotencyInFlightFail(idempotencyKey, e);
     throw e;
+  } finally {
+    if (holdsDistributedLock && idempotencyKey) {
+      await idempotencyReleaseDistributedLock(idempotencyKey);
+    }
   }
 }
 
