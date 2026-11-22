@@ -42,6 +42,9 @@ export interface IndexerHealthResponse {
   consecutiveErrors: number;
   fetchAttempts: number;
   fetchFailures: number;
+  checkpointLedger?: number;
+  checkpointPagingToken?: string | null;
+  checkpointUpdatedAt?: number;
 }
 
 /**
@@ -80,5 +83,8 @@ export function buildHealthResponse(
     consecutiveErrors: h.consecutiveErrors,
     fetchAttempts: h.fetchAttempts,
     fetchFailures: h.fetchFailures,
+    checkpointLedger: h.checkpointLedger,
+    checkpointPagingToken: h.checkpointPagingToken,
+    checkpointUpdatedAt: h.checkpointUpdatedAt,
   };
 }

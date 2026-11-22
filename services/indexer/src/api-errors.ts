@@ -26,3 +26,32 @@ export function sendApiError(
     ...details,
   });
 }
+
+export type CursorErrorReason = "malformed" | "unsupported" | "stale";
+
+export class CursorError extends Error {
+  constructor(
+    public readonly reason: CursorErrorReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = "CursorError";
+  }
+}
+
+const CURSOR_CODES: Record<CursorErrorReason, { status: number; code: string }> = {
+  malformed: { status: 400, code: "INVALID_CURSOR" },
+  unsupported: { status: 400, code: "UNSUPPORTED_CURSOR" },
+  stale: { status: 410, code: "STALE_CURSOR" },
+};
+
+export function sendCursorError(res: Response, error: CursorError): void {
+  const { status, code } = CURSOR_CODES[error.reason];
+  res.status(status).json({
+    error: error.message,
+    code,
+    reason: error.reason,
+    requestId: res.locals["requestId"],
+    hint: "Omit cursor to restart from the newest page.",
+  });
+}

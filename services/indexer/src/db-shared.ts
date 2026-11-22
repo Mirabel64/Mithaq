@@ -30,8 +30,10 @@ import {
   type Db,
   type DeliveryPage,
   type DeliveryPageCursor,
+  type IngestionCheckpoint,
   type IssuerAnalytics,
   type RecentCursor,
+  type RecentFilters,
   type StatsRow,
   type SubmissionStatus,
   type TopVerifier,
@@ -126,6 +128,32 @@ export function createSharedDb(dialect: SqlDialect): Db {
       await dialect.run(
         "UPDATE ledger_cursor SET last_ledger = ? WHERE id = 1",
         [seq],
+      );
+    },
+
+    async getIngestionCheckpoint(): Promise<IngestionCheckpoint> {
+      const row = await dialect.get<Record<string, SqlParam>>(
+        "SELECT last_ledger, paging_token, last_event_id, updated_at FROM ingestion_checkpoint WHERE id = 1",
+      );
+      return {
+        lastLedger: toCount(row?.last_ledger),
+        pagingToken: row?.paging_token == null ? null : String(row.paging_token),
+        lastEventId: row?.last_event_id == null ? null : String(row.last_event_id),
+        updatedAt: toCount(row?.updated_at),
+      };
+    },
+
+    async setIngestionCheckpoint(checkpoint) {
+      await dialect.run(
+        `UPDATE ingestion_checkpoint
+         SET last_ledger = ?, paging_token = ?, last_event_id = ?, updated_at = ?
+         WHERE id = 1`,
+        [
+          checkpoint.lastLedger,
+          checkpoint.pagingToken,
+          checkpoint.lastEventId,
+          checkpoint.updatedAt,
+        ],
       );
     },
 
@@ -260,6 +288,41 @@ export function createSharedDb(dialect: SqlDialect): Db {
       );
     },
 
+    async claimsByWalletPage(wallet, filters = {}, limit, cursor) {
+      const conditions = ["wallet = ?"];
+      const params: (string | number)[] = [wallet];
+
+      if (filters.credentialType !== undefined) {
+        conditions.push("credential_type = ?");
+        params.push(filters.credentialType);
+      }
+      if (filters.issuer !== undefined) {
+        conditions.push("issuer = ?");
+        params.push(filters.issuer);
+      }
+      if (filters.state === "revoked") {
+        conditions.push("revoked = 1");
+      } else if (filters.state === "expired") {
+        conditions.push("revoked = 0 AND expiry > 0 AND expiry <= ?");
+        params.push(filters.now ?? Math.floor(Date.now() / 1000));
+      } else if (filters.state === "active") {
+        conditions.push("revoked = 0 AND (expiry = 0 OR expiry > ?)");
+        params.push(filters.now ?? Math.floor(Date.now() / 1000));
+      }
+      if (cursor) {
+        conditions.push("(ledger_sequence < ? OR (ledger_sequence = ? AND id < ?))");
+        params.push(cursor.ledgerSequence, cursor.ledgerSequence, cursor.id);
+      }
+
+      params.push(limit + 1);
+      const rows = await claims(
+        `SELECT * FROM claims WHERE ${conditions.join(" AND ")}
+         ORDER BY ledger_sequence DESC, id DESC LIMIT ?`,
+        params,
+      );
+      return toRecentPage(rows, limit);
+    },
+
     async stats() {
       return dialect.all<StatsRow>(
         `SELECT
@@ -385,24 +448,39 @@ export function createSharedDb(dialect: SqlDialect): Db {
       return buildIssuerAnalytics(issuer, await claimsByIssuerRows(issuer));
     },
 
-    async recent(limit, cursor: RecentCursor | null) {
-      // Fetch limit + 1 so the caller can tell whether another page exists.
-      const rows = cursor
-        ? await claims(
-            `SELECT * FROM claims
-             WHERE revoked = 0
-               AND (ledger_sequence < ? OR (ledger_sequence = ? AND id < ?))
-             ORDER BY ledger_sequence DESC, id DESC
-             LIMIT ?`,
-            [cursor.ledgerSequence, cursor.ledgerSequence, cursor.id, limit + 1],
-          )
-        : await claims(
-            `SELECT * FROM claims
-             WHERE revoked = 0
-             ORDER BY ledger_sequence DESC, id DESC
-             LIMIT ?`,
-            [limit + 1],
-          );
+    async recent(limit, cursor: RecentCursor | null, filters: RecentFilters = {}) {
+      const conditions = ["revoked = 0"];
+      const params: (string | number)[] = [];
+
+      if (filters.startTime !== undefined) {
+        conditions.push("verified_at >= ?");
+        params.push(filters.startTime);
+      }
+      if (filters.endTime !== undefined) {
+        conditions.push("verified_at < ?");
+        params.push(filters.endTime);
+      }
+      if (filters.minLedger !== undefined) {
+        conditions.push("ledger_sequence >= ?");
+        params.push(filters.minLedger);
+      }
+      if (filters.maxLedger !== undefined) {
+        conditions.push("ledger_sequence <= ?");
+        params.push(filters.maxLedger);
+      }
+      if (cursor) {
+        conditions.push("(ledger_sequence < ? OR (ledger_sequence = ? AND id < ?))");
+        params.push(cursor.ledgerSequence, cursor.ledgerSequence, cursor.id);
+      }
+      params.push(limit + 1);
+
+      const rows = await claims(
+        `SELECT * FROM claims
+         WHERE ${conditions.join(" AND ")}
+         ORDER BY ledger_sequence DESC, id DESC
+         LIMIT ?`,
+        params,
+      );
       return toRecentPage(rows, limit);
     },
 
@@ -417,6 +495,13 @@ export function createSharedDb(dialect: SqlDialect): Db {
         "SELECT MAX(ledger_sequence) AS max_ledger FROM claims",
       );
       return toCount(row?.max_ledger);
+    },
+
+    async getMinClaimLedger() {
+      const row = await dialect.get<{ min_ledger: SqlParam }>(
+        "SELECT MIN(ledger_sequence) AS min_ledger FROM claims",
+      );
+      return toCount(row?.min_ledger);
     },
 
     async insertAppSubmission(
