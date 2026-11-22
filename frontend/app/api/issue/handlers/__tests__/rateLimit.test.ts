@@ -20,6 +20,9 @@ const ENV_KEYS = [
   "RATE_LIMIT_ISSUE_IP",
   "RATE_LIMIT_ISSUE_WALLET",
   "RATE_LIMIT_WINDOW_SECONDS",
+  // These cases exercise per-IP keying, so they run as a deployment behind a
+  // single trusted proxy; without it lib/client-ip deliberately ignores XFF.
+  "TRUSTED_PROXY_HOPS",
 ] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -35,6 +38,7 @@ beforeEach(() => {
   process.env.RATE_LIMIT_ISSUE_IP = "1";
   process.env.RATE_LIMIT_ISSUE_WALLET = "1";
   process.env.RATE_LIMIT_WINDOW_SECONDS = "60";
+  process.env.TRUSTED_PROXY_HOPS = "1";
   rateLimitClear();
 });
 

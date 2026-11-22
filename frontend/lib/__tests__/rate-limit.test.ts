@@ -150,33 +150,47 @@ describe("rateLimitCleanup", () => {
 // ---------------------------------------------------------------------------
 
 describe("extractIp", () => {
-  it("returns the first value from x-forwarded-for", () => {
-    expect(extractIp(makeRequest({ "x-forwarded-for": "1.2.3.4, 5.6.7.8" }))).toBe("1.2.3.4");
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("ignores forwarding headers when no proxy is configured", () => {
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "");
+    const req = makeRequest({
+      "x-forwarded-for": "1.2.3.4, 5.6.7.8",
+      "x-real-ip": "4.4.4.4",
+      "cf-connecting-ip": "1.1.1.1",
+    });
+    expect(extractIp(req)).toBe("unknown");
   });
 
-  it("handles a single address in x-forwarded-for", () => {
+  it("trusts the right-most value from x-forwarded-for behind one proxy", () => {
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
     expect(extractIp(makeRequest({ "x-forwarded-for": "9.10.11.12" }))).toBe("9.10.11.12");
+    expect(extractIp(makeRequest({ "x-forwarded-for": "  1.2.3.4  , 5.6.7.8" }))).toBe(
+      "5.6.7.8",
+    );
   });
 
-  it("trims whitespace from x-forwarded-for entries", () => {
-    expect(extractIp(makeRequest({ "x-forwarded-for": "  1.2.3.4  , 5.6.7.8" }))).toBe("1.2.3.4");
+  it("does not let a caller pick the address through a spoofed leftmost entry", () => {
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
+    expect(extractIp(makeRequest({ "x-forwarded-for": "10.0.0.1, 198.51.100.9" }))).toBe(
+      "198.51.100.9",
+    );
   });
 
-  it("falls back to x-real-ip when x-forwarded-for is absent", () => {
+  it("uses x-real-ip only when it is the configured source", () => {
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
+    vi.stubEnv("TRUSTED_CLIENT_IP_HEADER", "x-real-ip");
     expect(extractIp(makeRequest({ "x-real-ip": "4.4.4.4" }))).toBe("4.4.4.4");
   });
 
-  it("falls back to cf-connecting-ip when other headers are absent", () => {
+  it("uses cf-connecting-ip only when it is the configured source", () => {
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
+    vi.stubEnv("TRUSTED_CLIENT_IP_HEADER", "cf-connecting-ip");
     expect(extractIp(makeRequest({ "cf-connecting-ip": "1.1.1.1" }))).toBe("1.1.1.1");
   });
 
-  it("prefers x-forwarded-for over x-real-ip", () => {
-    expect(
-      extractIp(makeRequest({ "x-forwarded-for": "10.0.0.1", "x-real-ip": "10.0.0.2" })),
-    ).toBe("10.0.0.1");
-  });
-
   it("returns 'unknown' when no IP header is present", () => {
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
     expect(extractIp(makeRequest())).toBe("unknown");
   });
 });
