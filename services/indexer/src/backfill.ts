@@ -27,6 +27,7 @@
 import fs from "fs";
 import path from "path";
 import type { Config } from "./config";
+import { parseNetwork } from "./networks";
 import type { Db } from "./db";
 import {
   parseEvent,
@@ -41,6 +42,7 @@ export type LedgerBound = number | "genesis" | "head";
 export interface BackfillOptions {
   from: LedgerBound;
   to: LedgerBound;
+  network: string;
   batchSize: number;
   resume: boolean;
   checkpointPath: string;
@@ -57,7 +59,9 @@ export interface BackfillCheckpoint {
   lastLedger: number;
   /** Total events written so far across all batches of this run. */
   processed: number;
-  /** True once the range is fully indexed. */
+  eventsExamined: number;
+  network: string;
+  contractId: string;
   done: boolean;
   updatedAt: string;
 }
@@ -65,7 +69,10 @@ export interface BackfillCheckpoint {
 export interface BackfillResult {
   from: number;
   to: number;
+  network: string;
   batches: number;
+  eventsExamined: number;
+  recordsChanged: number;
   processed: number;
   lastLedger: number;
 }
@@ -94,9 +101,13 @@ const parseBound = (raw: string, flag: string): LedgerBound => {
 };
 
 export const parseBackfillArgs = (argv: string[]): BackfillOptions => {
+  let from: LedgerBound | undefined;
+  let to: LedgerBound | undefined;
+  let network: string | undefined;
   const opts: BackfillOptions = {
-    from: "genesis",
-    to: "head",
+    from: 0,
+    to: 0,
+    network: "",
     batchSize: MAX_HORIZON_LIMIT,
     resume: false,
     checkpointPath: process.env.BACKFILL_CHECKPOINT ?? DEFAULT_CHECKPOINT,
@@ -111,11 +122,18 @@ export const parseBackfillArgs = (argv: string[]): BackfillOptions => {
     };
     switch (arg) {
       case "--from":
-        opts.from = parseBound(next(), "--from");
+        from = parseBound(next(), "--from");
         break;
       case "--to":
-        opts.to = parseBound(next(), "--to");
+        to = parseBound(next(), "--to");
         break;
+      case "--network": {
+        const raw = next();
+        const parsed = parseNetwork(raw);
+        if (!parsed) throw new Error(`--network must be testnet | mainnet | futurenet (got "${raw}")`);
+        network = parsed;
+        break;
+      }
       case "--batch-size": {
         const n = Number(next());
         if (!Number.isInteger(n) || n < 1 || n > MAX_HORIZON_LIMIT) {
@@ -135,11 +153,17 @@ export const parseBackfillArgs = (argv: string[]): BackfillOptions => {
     }
   }
 
-  if (opts.from === "head") throw new Error(`--from cannot be "head"`);
-  if (opts.to === "genesis") throw new Error(`--to cannot be "genesis"`);
-  if (typeof opts.from === "number" && typeof opts.to === "number" && opts.from > opts.to) {
-    throw new Error(`--from (${opts.from}) must be <= --to (${opts.to})`);
+  if (!network) throw new Error("--network is required (testnet | mainnet | futurenet)");
+  if (from === undefined) throw new Error("--from is required");
+  if (to === undefined) throw new Error("--to is required");
+  if (from === "head") throw new Error(`--from cannot be "head"`);
+  if (to === "genesis") throw new Error(`--to cannot be "genesis"`);
+  if (typeof from === "number" && typeof to === "number" && from > to) {
+    throw new Error(`--from (${from}) must be <= --to (${to})`);
   }
+  opts.from = from;
+  opts.to = to;
+  opts.network = network;
   return opts;
 };
 
@@ -178,6 +202,12 @@ export const runBackfill = async (
   const fetchImpl = deps.fetchImpl ?? fetch;
   const log = deps.log ?? ((m: string) => console.log(m));
   const sleep = deps.sleep ?? defaultSleep;
+
+  if (opts.network !== config.stellarNetwork) {
+    throw new Error(
+      `--network ${opts.network} does not match configured STELLAR_NETWORK ${config.stellarNetwork}`,
+    );
+  }
 
   const getJson = async (url: URL): Promise<unknown> => {
     let lastErr: unknown;
@@ -223,10 +253,25 @@ export const runBackfill = async (
     }
     if (existing.done) {
       log(`[backfill] Checkpoint at ${opts.checkpointPath} is already complete (ledgers ${existing.from}..${existing.to}).`);
-      return { from: existing.from, to: existing.to, batches: 0, processed: existing.processed, lastLedger: existing.lastLedger };
+      return {
+        from: existing.from,
+        to: existing.to,
+        network: opts.network,
+        batches: 0,
+        eventsExamined: existing.eventsExamined ?? existing.processed,
+        recordsChanged: existing.processed,
+        processed: existing.processed,
+        lastLedger: existing.lastLedger,
+      };
+    }
+    if (existing.network && existing.network !== opts.network) {
+      throw new Error(`Checkpoint belongs to ${existing.network}, not ${opts.network}`);
+    }
+    if (existing.contractId && existing.contractId !== config.proofRegistryContractId) {
+      throw new Error("Checkpoint belongs to a different ProofRegistry contract");
     }
     cp = existing;
-    log(`[backfill] Resuming ${cp.from}..${cp.to} after ledger ${cp.lastLedger} (${cp.processed} events so far)`);
+    log(`[replay] Resuming ${cp.from}..${cp.to} after ledger ${cp.lastLedger} (${cp.processed} events so far)`);
   } else {
     if (existing && !existing.done) {
       throw new Error(
@@ -241,9 +286,19 @@ export const runBackfill = async (
     if (to < from) {
       throw new Error(`Nothing to backfill: range ${from}..${to} is empty after capping at the finality ceiling ${ceiling}`);
     }
-    cp = { from, to, lastLedger: from > 0 ? from - 1 : 0, processed: 0, done: false, updatedAt: new Date().toISOString() };
+    cp = {
+      from,
+      to,
+      lastLedger: from > 0 ? from - 1 : 0,
+      processed: 0,
+      eventsExamined: 0,
+      network: opts.network,
+      contractId: config.proofRegistryContractId,
+      done: false,
+      updatedAt: new Date().toISOString(),
+    };
     writeCheckpoint(opts.checkpointPath, cp);
-    log(`[backfill] Starting ledgers ${from > 0 ? from : "earliest"}..${to}, batch size ${opts.batchSize}`);
+    log(`[replay] ${opts.network}:${config.proofRegistryContractId} ledgers ${from > 0 ? from : "earliest"}..${to}, batch size ${opts.batchSize}`);
   }
 
   // 2. Page through events in ascending order.
@@ -263,6 +318,7 @@ export const runBackfill = async (
     const records = page?._embedded?.records ?? [];
 
     let batchProcessed = 0;
+    let batchExamined = 0;
     let reachedEnd = records.length < opts.batchSize;
 
     for (const ev of records) {
@@ -272,6 +328,7 @@ export const runBackfill = async (
         reachedEnd = true;
         break;
       }
+      batchExamined++;
       const parsed = parseEvent(ev, config.proofRegistryContractId);
       if (parsed.kind === "verified") {
         await db.upsertClaim({
@@ -295,6 +352,7 @@ export const runBackfill = async (
     }
 
     batches++;
+    cp.eventsExamined += batchExamined;
     cp.processed += batchProcessed;
     if (reachedEnd) {
       cp.done = true;
@@ -305,11 +363,20 @@ export const runBackfill = async (
 
     const pct = Math.min(100, Math.max(0, ((cp.lastLedger - cp.from + 1) / span) * 100));
     log(
-      `[backfill] batch ${batches}: ${batchProcessed} events, through ledger ${cp.lastLedger}/${cp.to} ` +
-        `(${pct.toFixed(1)}%, ${cp.processed} total)`
+      `[replay] batch ${batches}: ${batchExamined} examined, ${batchProcessed} changed, through ledger ${cp.lastLedger}/${cp.to} ` +
+        `(${pct.toFixed(1)}%, ${cp.processed} total changes)`
     );
   }
 
-  log(`[backfill] Done: ledgers ${cp.from}..${cp.to}, ${cp.processed} events in ${batches} batches.`);
-  return { from: cp.from, to: cp.to, batches, processed: cp.processed, lastLedger: cp.lastLedger };
+  log(`[replay] Done: ledgers ${cp.from}..${cp.to}, ${cp.processed} records changed in ${batches} batches.`);
+  return {
+    from: cp.from,
+    to: cp.to,
+    network: opts.network,
+    batches,
+    eventsExamined: cp.eventsExamined ?? cp.processed,
+    recordsChanged: cp.processed,
+    processed: cp.processed,
+    lastLedger: cp.lastLedger,
+  };
 };

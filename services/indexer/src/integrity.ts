@@ -68,6 +68,7 @@ import {
 } from "@stellar/stellar-sdk";
 import type { Config } from "./config";
 import { createHttpClient, optionsFromConfig } from "./http-client";
+import { createResilientRpcClient } from "./rpc-client";
 import type { ClaimRow, Db } from "./db-types";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -348,13 +349,13 @@ export function proofStorageKey(
  * keyspace.
  */
 export function createSorobanContractReader(config: Config): ContractReader {
-  const server = new SorobanRpc.Server(config.rpcUrl);
+  const rpc = createResilientRpcClient(config);
 
   return {
     async readProofRecord({ contractId, wallet, credentialType }) {
       const key = proofStorageKey(wallet, credentialType);
       try {
-        const entry = await server.getContractData(
+        const entry = await rpc.getContractData(
           contractId,
           key,
           SorobanRpc.Durability.Persistent

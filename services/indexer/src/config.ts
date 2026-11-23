@@ -23,6 +23,7 @@ export interface Config {
   stellarNetwork: string;
   horizonUrl: string;
   rpcUrl: string;
+  rpcUrls?: string[];
   /** Network passphrase matching the selected network (preset or override). */
   networkPassphrase: string;
   proofRegistryContractId: string;
@@ -85,6 +86,17 @@ function clampedInt(name: string, def: number, min: number, max: number): number
   return Math.min(max, Math.max(min, Math.floor(raw)));
 }
 
+export function parseRpcUrls(raw: string | undefined, fallback: string): string[] {
+  const candidates = raw
+    ? raw
+        .split(/[\s,]+/)
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+    : [fallback];
+  if (candidates.length === 0) candidates.push(fallback);
+  return [...new Set(candidates)];
+}
+
 export function parseCorsOrigins(raw?: string): string[] {
   if (!raw || raw.trim() === "") {
     if (process.env.NODE_ENV === "production") {
@@ -139,6 +151,7 @@ export function loadConfig(): Config {
     );
   }
 
+  const rpcUrl = envRpc ?? preset.rpcUrl;
   const rawCors = process.env["CORS_ALLOWED_ORIGINS"] ?? process.env["CORS_ORIGIN"];
   const windowSec = Number(optional("RATE_LIMIT_WINDOW_SECONDS", "60"));
   const maxReq = Number(
@@ -171,7 +184,8 @@ export function loadConfig(): Config {
   return {
     stellarNetwork: network,
     horizonUrl: envHorizon ?? preset.horizonUrl,
-    rpcUrl: envRpc ?? preset.rpcUrl,
+    rpcUrl,
+    rpcUrls: parseRpcUrls(process.env["SOROBAN_RPC_URLS"], rpcUrl),
     networkPassphrase: envPassphrase ?? preset.networkPassphrase,
     proofRegistryContractId: required("PROOF_REGISTRY_CONTRACT_ID"),
     dbDriver: driver,
