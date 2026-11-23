@@ -116,10 +116,12 @@ import { MAX_WEBHOOK_DELIVERY_ATTEMPTS } from "./webhooks";
 import { createGraphQLHandler } from "./graphql";
 import { buildHealthResponse } from "./health";
 import { randomUUID } from "crypto";
-import { sendApiError } from "./api-errors";
+import { CursorError, sendApiError, sendCursorError } from "./api-errors";
 
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 20;
+const MAX_LEDGER_RANGE = 100_000;
+const MAX_TIME_RANGE_SECONDS = 30 * 24 * 60 * 60;
 
 /** Known Mithaq credential types â€” submissions must reference only these. */
 const VALID_CLAIM_TYPES = new Set([
@@ -202,15 +204,45 @@ export function serializeClaim(
 // keyset boundary of the last row on the page. It is opaque to clients: they
 // must echo it back verbatim, never construct or interpret it.
 
-function encodeCursor(cursor: RecentCursor): string {
-  return Buffer.from(`${cursor.ledgerSequence}:${cursor.id}`, "utf8").toString(
-    "base64url"
-  );
+const CURSOR_SCOPES = {
+  claims: "claims.v1",
+  recent: "recent.v1",
+} as const;
+
+type CursorScope = keyof typeof CURSOR_SCOPES;
+
+function encodeScopedCursor(scope: CursorScope, cursor: RecentCursor): string {
+  return Buffer.from(
+    `${CURSOR_SCOPES[scope]}:${cursor.ledgerSequence}:${cursor.id}`,
+    "utf8",
+  ).toString("base64url");
 }
 
-function decodeCursor(raw: string): RecentCursor {
+function decodeScopedCursor(scope: CursorScope, raw: string): RecentCursor {
   const decoded = Buffer.from(raw, "base64url").toString("utf8");
-  const [ledgerRaw, idRaw] = decoded.split(":");
+  const parts = decoded.split(":");
+  if (parts.length === 2) {
+    const [ledgerRaw, idRaw] = parts;
+    const ledgerSequence = Number(ledgerRaw);
+    const id = Number(idRaw);
+    if (
+      Number.isInteger(ledgerSequence) &&
+      Number.isInteger(id) &&
+      ledgerSequence >= 0 &&
+      id >= 1
+    ) {
+      return { ledgerSequence, id };
+    }
+    throw new CursorError("malformed", "invalid cursor");
+  }
+
+  const [tokenScope, ledgerRaw, idRaw, ...extra] = parts;
+  if (tokenScope !== CURSOR_SCOPES[scope] || extra.length > 0) {
+    throw new CursorError(
+      "unsupported",
+      `Cursor belongs to a different endpoint or version; omit cursor to restart.`,
+    );
+  }
   const ledgerSequence = Number(ledgerRaw);
   const id = Number(idRaw);
   if (
@@ -219,9 +251,17 @@ function decodeCursor(raw: string): RecentCursor {
     ledgerSequence < 0 ||
     id < 1
   ) {
-    throw new Error("invalid cursor");
+    throw new CursorError("malformed", "invalid cursor");
   }
   return { ledgerSequence, id };
+}
+
+function encodeCursor(cursor: RecentCursor): string {
+  return encodeScopedCursor("recent", cursor);
+}
+
+function decodeCursor(raw: string): RecentCursor {
+  return decodeScopedCursor("recent", raw);
 }
 
 // â"€â"€ Delivery cursor encoding â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -245,7 +285,7 @@ function decodeDeliveryCursor(raw: string): { occurredAt: number; id: number } {
     occurredAt < 0 ||
     id < 1
   ) {
-    throw new Error("invalid cursor");
+    throw new CursorError("malformed", "invalid cursor");
   }
   return { occurredAt, id };
 }
@@ -266,6 +306,33 @@ export function buildApp(
   integrity?: IntegrityChecker
 ): express.Application {
   const app = express();
+
+  const parseCursorParam = async (
+    res: Response,
+    scope: CursorScope,
+    raw: unknown,
+  ): Promise<{ cursor: RecentCursor | null; failed: boolean }> => {
+    if (raw == null || String(raw).trim() === "") {
+      return { cursor: null, failed: false };
+    }
+    let cursor: RecentCursor;
+    try {
+      cursor = decodeScopedCursor(scope, String(raw));
+    } catch (err) {
+      if (err instanceof CursorError) sendCursorError(res, err);
+      else sendApiError(res, 400, "invalid cursor");
+      return { cursor: null, failed: true };
+    }
+    const minLedger = await db.getMinClaimLedger();
+    if (minLedger > 0 && cursor.ledgerSequence < minLedger) {
+      sendCursorError(
+        res,
+        new CursorError("stale", "Cursor is outside the retained claim window."),
+      );
+      return { cursor: null, failed: true };
+    }
+    return { cursor, failed: false };
+  };
 
   app.use((req, res, next) => {
     const inbound = req.header("x-request-id");
@@ -373,6 +440,7 @@ export function buildApp(
     "/metrics",
     asyncHandler(async (_req, res) => {
       const metrics = ingester.getMetrics();
+      const health = ingester.getHealth();
       const lines: string[] = [];
 
       // Events processed total
@@ -419,6 +487,12 @@ export function buildApp(
         `# TYPE indexer_ledgers_behind_head gauge`,
       );
       lines.push(`indexer_ledgers_behind_head ${metrics.lag}`);
+
+      lines.push(
+        `# HELP indexer_checkpoint_ledger Durable ingestion checkpoint ledger.`,
+      );
+      lines.push(`# TYPE indexer_checkpoint_ledger gauge`);
+      lines.push(`indexer_checkpoint_ledger ${health.checkpointLedger ?? 0}`);
 
       // â”€â”€ On-chain data integrity (#612) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       // `indexer_state_mismatches` is the alerting series: it holds the number
@@ -623,15 +697,38 @@ export function buildApp(
       const now = Math.floor(Date.now() / 1000);
       const state =
         typeof rawState === "string" ? rawState.trim() as ClaimState : undefined;
-      const claims = await db.claimsByWallet(wallet.trim(), {
+      const filters = {
         credentialType: typeof credentialType === "string" ? credentialType.trim() : undefined,
         issuer: typeof issuer === "string" ? issuer.trim() : undefined,
         state,
         now,
-      });
+      };
+
+      const paginated =
+        req.query["limit"] !== undefined || req.query["cursor"] !== undefined;
+      if (!paginated) {
+        const claims = await db.claimsByWallet(wallet.trim(), filters);
+        res.json({
+          wallet: wallet.trim(),
+          claims: claims.map((row) => serializeClaim(row, { now })),
+        });
+        return;
+      }
+
+      const rawLimit = Number(req.query["limit"] ?? DEFAULT_LIMIT);
+      if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > MAX_LIMIT) {
+        sendApiError(res, 400, `limit must be an integer between 1 and ${MAX_LIMIT}`);
+        return;
+      }
+      const parsed = await parseCursorParam(res, "claims", req.query["cursor"]);
+      if (parsed.failed) return;
+
+      const page = await db.claimsByWalletPage(wallet.trim(), filters, rawLimit, parsed.cursor);
       res.json({
         wallet: wallet.trim(),
-        claims: claims.map((row) => serializeClaim(row, { now })),
+        claims: page.claims.map((row) => serializeClaim(row, { now })),
+        limit: rawLimit,
+        nextCursor: page.nextCursor ? encodeScopedCursor("claims", page.nextCursor) : null,
       });
     })
   );
@@ -657,24 +754,60 @@ export function buildApp(
         ? DEFAULT_LIMIT
         : Math.min(rawLimit, MAX_LIMIT);
 
-      // Cursor is optional â€” omit it (or pass cursor=) to start at the newest
-      // claims. A malformed cursor is a client error, not silently page 1.
-      const rawCursor = req.query["cursor"];
-      let cursor: RecentCursor | null = null;
-      if (rawCursor != null && String(rawCursor).trim() !== "") {
-        try {
-          cursor = decodeCursor(String(rawCursor));
-        } catch {
-          sendApiError(res, 400, "invalid cursor");
-          return;
+      const readBound = (name: string): number | undefined => {
+        const raw = req.query[name];
+        if (raw === undefined) return undefined;
+        const value = Number(raw);
+        if (!Number.isInteger(value) || value < 0) {
+          throw new Error(`${name} must be a non-negative integer`);
         }
+        return value;
+      };
+
+      let startTime: number | undefined;
+      let endTime: number | undefined;
+      let minLedger: number | undefined;
+      let maxLedger: number | undefined;
+      try {
+        startTime = readBound("startTime");
+        endTime = readBound("endTime");
+        minLedger = readBound("startLedger");
+        maxLedger = readBound("endLedger");
+      } catch (err) {
+        sendApiError(res, 400, (err as Error).message);
+        return;
       }
 
-      const { claims, nextCursor } = await db.recent(limit, cursor);
+      if (startTime !== undefined && endTime !== undefined && startTime > endTime) {
+        sendApiError(res, 400, "startTime must be before endTime");
+        return;
+      }
+      if (minLedger !== undefined && maxLedger !== undefined && minLedger > maxLedger) {
+        sendApiError(res, 400, "startLedger must be before endLedger");
+        return;
+      }
+      if (minLedger !== undefined && maxLedger !== undefined && maxLedger - minLedger > MAX_LEDGER_RANGE) {
+        sendApiError(res, 400, `ledger range cannot exceed ${MAX_LEDGER_RANGE} ledgers`);
+        return;
+      }
+      if (startTime !== undefined && endTime !== undefined && endTime - startTime > MAX_TIME_RANGE_SECONDS) {
+        sendApiError(res, 400, `time range cannot exceed ${MAX_TIME_RANGE_SECONDS} seconds`);
+        return;
+      }
+
+      const parsed = await parseCursorParam(res, "recent", req.query["cursor"]);
+      if (parsed.failed) return;
+
+      const { claims, nextCursor } = await db.recent(limit, parsed.cursor, {
+        startTime,
+        endTime,
+        minLedger,
+        maxLedger,
+      });
       res.json({
         claims: claims.map((row) => serializeClaim(row)),
         limit,
-        nextCursor: nextCursor ? encodeCursor(nextCursor) : null,
+        nextCursor: nextCursor ? encodeScopedCursor("recent", nextCursor) : null,
       });
     })
   );
@@ -1037,8 +1170,12 @@ export function buildApp(
         try {
           const decoded = decodeDeliveryCursor(req.query["cursor"] as string);
           cursor = decoded;
-        } catch {
-          sendApiError(res, 400, "invalid cursor");
+        } catch (err) {
+          if (err instanceof CursorError) {
+            sendCursorError(res, err);
+          } else {
+            sendApiError(res, 400, "invalid cursor");
+          }
           return;
         }
       }

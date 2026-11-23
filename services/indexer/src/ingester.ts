@@ -85,6 +85,12 @@ export interface IngesterHealth {
   fetchAttempts: number;
   /** Total failed fetch attempts (all retries exhausted) since start. */
   fetchFailures: number;
+  /** Ledger sequence from the durable ingestion checkpoint. */
+  checkpointLedger?: number;
+  /** Opaque Horizon paging token from the durable ingestion checkpoint. */
+  checkpointPagingToken?: string | null;
+  /** Timestamp (ms) of the last checkpoint write. */
+  checkpointUpdatedAt?: number;
 }
 
 /** Prometheus metrics for the ingester. */
@@ -111,6 +117,9 @@ function freshHealth(): IngesterHealth {
     consecutiveErrors: 0,
     fetchAttempts: 0,
     fetchFailures: 0,
+    checkpointLedger: 0,
+    checkpointPagingToken: null,
+    checkpointUpdatedAt: 0,
   };
 }
 
@@ -690,7 +699,11 @@ export function createIngester(config: Config, db: Db): Ingester {
     const tickStart = Date.now();
     await processWebhookQueue();
 
-    const lastLedger = await db.getLastLedger();
+    const checkpoint = await db.getIngestionCheckpoint();
+    const lastLedger = Math.max(await db.getLastLedger(), checkpoint.lastLedger);
+    health.checkpointLedger = checkpoint.lastLedger;
+    health.checkpointPagingToken = checkpoint.pagingToken;
+    health.checkpointUpdatedAt = checkpoint.updatedAt;
 
     // 1. Determine the network head and the finality-safe ceiling.
     let headLedger: number;
@@ -730,11 +743,12 @@ export function createIngester(config: Config, db: Db): Ingester {
     //    configured, begin there; otherwise resume from lastLedger.
     const cursorNum = lastLedger > 0 ? lastLedger * 100_000 : 0;
     const cursor =
-      config.startLedger > 0 && lastLedger === 0
+      checkpoint.pagingToken ??
+      (config.startLedger > 0 && lastLedger === 0
         ? String(config.startLedger * 100_000)
         : cursorNum > 0
         ? String(cursorNum)
-        : undefined;
+        : undefined);
 
     // 4. Fetch events up to the finality ceiling.
     let events: HorizonContractEvent[];
@@ -773,7 +787,18 @@ export function createIngester(config: Config, db: Db): Ingester {
       if (evLedger > maxLedger) maxLedger = evLedger;
     }
     if (maxLedger > lastLedger) {
+      const lastEvent = events[events.length - 1];
+      const nextCheckpoint = {
+        lastLedger: maxLedger,
+        pagingToken: lastEvent?.paging_token ?? checkpoint.pagingToken,
+        lastEventId: lastEvent?.paging_token ?? checkpoint.lastEventId,
+        updatedAt: Date.now(),
+      };
+      await db.setIngestionCheckpoint(nextCheckpoint);
       await db.setLastLedger(maxLedger);
+      health.checkpointLedger = nextCheckpoint.lastLedger;
+      health.checkpointPagingToken = nextCheckpoint.pagingToken;
+      health.checkpointUpdatedAt = nextCheckpoint.updatedAt;
     }
     await processWebhookQueue();
 
@@ -813,8 +838,14 @@ export function createIngester(config: Config, db: Db): Ingester {
     // Roll back: delete all claims with ledger_sequence beyond the reorg point.
     await db.deleteClaimsAfter(reorgPoint);
 
-    // Reset cursor so we re-fetch from the reorg point.
+    // Reset cursor and checkpoint so we re-fetch from the reorg point.
     await db.setLastLedger(reorgPoint);
+    await db.setIngestionCheckpoint({
+      lastLedger: reorgPoint,
+      pagingToken: null,
+      lastEventId: null,
+      updatedAt: Date.now(),
+    });
 
     // Now run a normal tick — it will fetch events from reorgPoint onward
     // up to the new finality ceiling.

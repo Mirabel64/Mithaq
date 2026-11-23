@@ -623,6 +623,24 @@ Off-chain indexers (e.g. `services/indexer`) monitor events using Soroban RPC `g
 | `i128` | `ScVal::I128` | `bigint` / `string` |
 | `BytesN<64>` | `ScVal::Bytes` | `Buffer` / `Uint8Array` (64 bytes hex) |
 
+### Indexer Pagination & Resume Metadata (`#390`)
+
+`GET /claims` keeps its original `{ wallet, claims }` shape when no pagination
+parameters are supplied. Supplying `limit` and/or `cursor` returns a keyset page
+with `limit` and `nextCursor`, ordered by `(ledger_sequence DESC, id DESC)`.
+
+`GET /recent` accepts bounded `startTime`, `endTime`, `startLedger`, and
+`endLedger` filters in addition to `limit` and `cursor`. Invalid or excessive
+ranges return `400`; malformed, cross-endpoint, and stale cursors return
+documented `INVALID_CURSOR`, `UNSUPPORTED_CURSOR`, and `STALE_CURSOR` codes.
+
+The indexer persists a durable ingestion checkpoint (`lastLedger`,
+`paging_token`, `last_event_id`, `updated_at`) and resumes from the paging token
+after restarts. Event writes are idempotent, so a crash after writing events but
+before advancing the checkpoint replays the same batch without double-applying
+it. Checkpoint metadata is exposed in `/health` and as
+`indexer_checkpoint_ledger` in `/metrics`.
+
 ### SDK Real-Time Subscription Helper (`#392`)
 
 Protocols that need push-style notification when a watched wallet gains or

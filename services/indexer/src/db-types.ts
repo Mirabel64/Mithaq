@@ -94,6 +94,12 @@ export interface Db {
   /** Persist the last fully ingested ledger sequence. */
   setLastLedger(seq: number): void | Promise<void>;
 
+  /** Return durable ingestion checkpoint metadata for safe restarts. */
+  getIngestionCheckpoint(): IngestionCheckpoint | Promise<IngestionCheckpoint>;
+
+  /** Persist ingestion checkpoint metadata after event writes. */
+  setIngestionCheckpoint(checkpoint: IngestionCheckpoint): void | Promise<void>;
+
   /**
    * Delete all claims whose ledger_sequence is strictly greater than `fromLedger`.
    * Used during reorg reconciliation to roll back un-final data.
@@ -105,6 +111,9 @@ export interface Db {
    * Returns 0 if no claims exist.
    */
   getMaxClaimLedger(): number | Promise<number>;
+
+  /** Return the oldest ledger still represented in the claims table (0 if empty). */
+  getMinClaimLedger(): number | Promise<number>;
 
   /** Upsert a verified claim event. */
   upsertClaim(row: ClaimRow): void | Promise<void>;
@@ -145,6 +154,14 @@ export interface Db {
     filters?: WalletClaimFilters
   ): ClaimRow[] | Promise<ClaimRow[]>;
 
+  /** Return one deterministic keyset page of wallet claims. */
+  claimsByWalletPage(
+    wallet: string,
+    filters: WalletClaimFilters,
+    limit: number,
+    cursor: RecentCursor | null,
+  ): RecentPage | Promise<RecentPage>;
+
   /** Return aggregate counts per credential_type. */
   stats(): StatsRow[] | Promise<StatsRow[]>;
 
@@ -176,7 +193,11 @@ export interface Db {
    * (cursor) pagination ordered by (ledger_sequence DESC, id DESC). Fetches up
    * to `limit + 1` rows internally so the page can report whether more exist.
    */
-  recent(limit: number, cursor: RecentCursor | null): RecentPage | Promise<RecentPage>;
+  recent(
+    limit: number,
+    cursor: RecentCursor | null,
+    filters?: RecentFilters,
+  ): RecentPage | Promise<RecentPage>;
 
   /** Insert a new app submission. Returns the new row id. */
   insertAppSubmission(
@@ -250,6 +271,22 @@ export interface Db {
 export interface RecentCursor {
   ledgerSequence: number;
   id: number;
+}
+
+/** Bounded ledger/timestamp window for /recent polling clients. */
+export interface RecentFilters {
+  startTime?: number;
+  endTime?: number;
+  minLedger?: number;
+  maxLedger?: number;
+}
+
+/** Durable resume point for event ingestion. */
+export interface IngestionCheckpoint {
+  lastLedger: number;
+  pagingToken: string | null;
+  lastEventId: string | null;
+  updatedAt: number;
 }
 
 /** One page of /recent results plus the cursor for the next page (if any). */
