@@ -45,6 +45,9 @@ export interface IndexerHealthResponse {
   fetchFailures: number;
   rpc?: RpcDiagnostics;
   unresolvedLedgerRange?: IngesterHealth["unresolvedLedgerRange"];
+  checkpointLedger?: number;
+  checkpointPagingToken?: string | null;
+  checkpointUpdatedAt?: number;
 }
 
 /**
@@ -85,5 +88,8 @@ export function buildHealthResponse(
     fetchFailures: h.fetchFailures,
     rpc: getRpcDiagnostics(),
     unresolvedLedgerRange: h.unresolvedLedgerRange,
+    checkpointLedger: h.checkpointLedger,
+    checkpointPagingToken: h.checkpointPagingToken,
+    checkpointUpdatedAt: h.checkpointUpdatedAt,
   };
 }

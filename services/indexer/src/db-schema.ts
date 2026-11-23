@@ -81,6 +81,18 @@ export function buildSchema(dialect: SqlDialect): Schema {
   ${column("last_ledger", int, { notNull: true, default: "0" })}
 )`;
 
+  const ingestionCheckpoint = `CREATE TABLE IF NOT EXISTS ingestion_checkpoint (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  ${column("last_ledger", int, { notNull: true, default: "0" })},
+  ${column("paging_token", "TEXT")},
+  ${column("last_event_id", "TEXT")},
+  ${column("updated_at", int, { notNull: true, default: "0" })}
+)`;
+
+  const seedIngestionCheckpoint = `INSERT ${dialect.insertIgnorePrefix}INTO ingestion_checkpoint
+  (id, last_ledger, paging_token, last_event_id, updated_at)
+  VALUES (1, 0, NULL, NULL, 0)${dialect.conflictDoNothing}`;
+
   const appSubmissions = `CREATE TABLE IF NOT EXISTS app_submissions (
   ${column("id", dialect.submissionIdType)},
   ${column("app_name", "TEXT", { notNull: true })},
@@ -140,6 +152,8 @@ export function buildSchema(dialect: SqlDialect): Schema {
     claims,
     ledgerCursor,
     seedCursor,
+    ingestionCheckpoint,
+    seedIngestionCheckpoint,
     dataIntegrityState,
     seedDataIntegrityState,
     appSubmissions,
@@ -156,6 +170,8 @@ export function buildSchema(dialect: SqlDialect): Schema {
   const indexes = [
     ...dialect.extraClaimIndexes,
     `CREATE INDEX IF NOT EXISTS idx_claims_wallet ON claims (wallet)`,
+    `CREATE INDEX IF NOT EXISTS idx_claims_wallet_keyset
+  ON claims (wallet, ledger_sequence DESC, id DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_claims_type ON claims (credential_type)`,
     `CREATE INDEX IF NOT EXISTS idx_claims_verified_at ON claims (verified_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_claims_recent
